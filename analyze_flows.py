@@ -1,3 +1,7 @@
+#citation: most code from claude, modified by copiolot and chatgpt 
+#(cause I ran out of claude tokens D: )
+
+
 #!/usr/bin/env python3
 """
 analyze_flows.py
@@ -40,10 +44,35 @@ BINARY_CONTENT_TYPES = (
     "application/wasm",
 )
 
+#citation: chat 7/15/26
 STATIC_EXTENSIONS = (
-    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif",
-    ".svg", ".woff", ".woff2", ".ttf", ".eot", ".ico",
+    ".js",
+    ".mjs",
+    ".css",
     ".map",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot",
+)
+
+#citation: chat 7/15/26
+STATIC_PATHS = (
+    "/static/",
+    "/assets/",
+    "/dist/",
+    "/build/",
+    "/fonts/",
+    "/images/",
+    "/img/",
 )
 
 
@@ -53,11 +82,31 @@ def is_binary_content_type(ct: str) -> bool:
     return any(ct.startswith(b) for b in BINARY_CONTENT_TYPES)
 
 
+# def is_static_asset(url: str) -> bool:
+#     """Return True if the URL path ends with a common static asset extension."""
+#     parsed = urlparse(url)
+#     path = parsed.path.lower()
+#     return any(path.endswith(ext) for ext in STATIC_EXTENSIONS)
+
+#citation: chat 7/15/26
 def is_static_asset(url: str) -> bool:
-    """Return True if the URL path ends with a common static asset extension."""
-    parsed = urlparse(url)
-    path = parsed.path.lower()
-    return any(path.endswith(ext) for ext in STATIC_EXTENSIONS)
+    """
+    Return True if the URL points to a static asset that is unlikely to
+    contain user-entered sensitive data.
+    """
+    try:
+        path = urlparse(url).path.lower()
+
+        if any(path.endswith(ext) for ext in STATIC_EXTENSIONS):
+            return True
+
+        if any(directory in path for directory in STATIC_PATHS):
+            return True
+
+        return False
+
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -520,9 +569,13 @@ def insert_flow(conn: sqlite3.Connection, flow_id: str, timestamp: str,
         (flow_id, timestamp, source, url, method, content_type, word_count),
     )
 
-
+#citation: gemini, approved by chatgpt 7/15/26
 def insert_matches(conn: sqlite3.Connection, flow_id: str, matches: list[dict]):
-    """Insert all sensitivity matches for a given flow."""
+    """Insert all sensitivity matches for a given flow, clearing old ones first to prevent duplicates."""
+    # 1. Clear out previous matches for this flow
+    conn.execute("DELETE FROM sensitivity_matches WHERE flow_id = ?", (flow_id,))
+    
+    # 2. Insert the fresh matches
     conn.executemany(
         """
         INSERT INTO sensitivity_matches
@@ -535,6 +588,21 @@ def insert_matches(conn: sqlite3.Connection, flow_id: str, matches: list[dict]):
             for m in matches
         ],
     )
+
+# def insert_matches(conn: sqlite3.Connection, flow_id: str, matches: list[dict]):
+#     """Insert all sensitivity matches for a given flow."""
+#     conn.executemany(
+#         """
+#         INSERT INTO sensitivity_matches
+#             (flow_id, text_captured, sensitivity_level, classification, specific_type)
+#         VALUES (?, ?, ?, ?, ?)
+#         """,
+#         [
+#             (flow_id, m["text_captured"], m["sensitivity_level"],
+#              m["classification"], m["specific_type"])
+#             for m in matches
+#         ],
+#     )
 
 
 # ---------------------------------------------------------------------------
@@ -741,20 +809,34 @@ def process_flow_log(flow_log_path: str, db_path: str):
                 flow.request.timestamp_start
             ).isoformat() if flow.request.timestamp_start else datetime.utcnow().isoformat()
 
-            # --- Payload Extraction ---
+            # # --- Payload Extraction ---
+            # combined_text, content_type, _ = extract_text_from_flow(flow)
+
+            # # Skip flows with no text payload
+            # if not combined_text.strip():
+            #     flows_skipped += 1
+            #     continue
+
+            #citation: chat 7/15/26
             combined_text, content_type, url = extract_text_from_flow(flow)
 
-            # Skip static web libraries, scripts, stylesheets, and other assets.
-            # These often contain lots of punctuation/IDs and create high-noise
-            # false positives without carrying user-entered sensitive data.
-            if is_static_asset(url) or "javascript" in content_type.lower():
+            content_type = (content_type or "").lower()
+
+            # Skip static web assets (JavaScript, CSS, images, fonts, etc.)
+            if (
+                is_static_asset(url)
+                or "javascript" in content_type
+                or "ecmascript" in content_type
+            ):
                 flows_skipped += 1
                 continue
 
             # Skip flows with no text payload
-            if not combined_text.strip():
-                flows_skipped += 1
-                continue
+            # if not combined_text.strip():
+            #     flows_skipped += 1
+            #     continue
+            #end chatgpt
+        
 
             word_count = len(combined_text.split())
 

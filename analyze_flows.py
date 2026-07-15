@@ -801,6 +801,15 @@ def process_flow_log(flow_log_path: str, db_path: str):
                 flows_skipped += 1
                 continue
 
+            
+            #citation: gemini 7/15/26
+            #ISOLATE GRAMMARLY TRAFFIC ONLY
+            host = flow.request.pretty_host.lower() if hasattr(flow.request, "pretty_host") else ""
+            if "grammarly" not in host:
+                flows_skipped += 1
+                continue
+
+
             flow_id   = generate_flow_id(flow)
             source    = get_source(flow)
             method    = flow.request.method

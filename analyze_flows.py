@@ -728,10 +728,19 @@ def print_report(conn: sqlite3.Connection):
     """
     sev_rows = conn.execute(q4).fetchall()
     if sev_rows:
+        #citation: chatgpt 7/16/26
+        max_count = max(cnt for _, cnt in sev_rows)
+
         for sev, cnt in sev_rows:
             color = severity_color(sev)
-            bar = "█" * min(cnt, 40)
+            bar_length = max(1, int((cnt / max_count) * 40))
+            bar = "█" * bar_length
+
             print(f"  {color}{sev:<10}{RESET}  {cnt:>5}  {color}{bar}{RESET}")
+        # for sev, cnt in sev_rows:
+        #     color = severity_color(sev)
+        #     bar = "█" * min(cnt, 40)
+        #     print(f"  {color}{sev:<10}{RESET}  {cnt:>5}  {color}{bar}{RESET}")
     else:
         print("  No matches recorded.")
 

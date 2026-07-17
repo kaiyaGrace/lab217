@@ -518,8 +518,12 @@ CREATE TABLE IF NOT EXISTS captured_flows (
     url          TEXT,
     method       TEXT,
     content_type TEXT,
-    word_count   INTEGER
+    word_count   INTEGER,
+    source_file  TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_flows_source_file
+    ON captured_flows(source_file);
 
 CREATE TABLE IF NOT EXISTS sensitivity_matches (
     match_id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -555,7 +559,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
 
 def insert_flow(conn: sqlite3.Connection, flow_id: str, timestamp: str,
                 source: str, url: str, method: str,
-                content_type: str, word_count: int):
+                content_type: str, word_count: int, source_file: str):
     """
     Insert a flow record using INSERT OR IGNORE to enforce idempotency.
     Reruns won't create duplicates.
@@ -563,10 +567,10 @@ def insert_flow(conn: sqlite3.Connection, flow_id: str, timestamp: str,
     conn.execute(
         """
         INSERT OR IGNORE INTO captured_flows
-            (flow_id, timestamp, source, url, method, content_type, word_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (flow_id, timestamp, source, url, method, content_type, word_count, source_file)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (flow_id, timestamp, source, url, method, content_type, word_count),
+        (flow_id, timestamp, source, url, method, content_type, word_count, source_file),
     )
 
 #citation: gemini, approved by chatgpt 7/15/26
@@ -631,8 +635,9 @@ def severity_color(level: str) -> str:
     return SEVERITY_COLORS.get(level, "")
 
 
-def print_report(conn: sqlite3.Connection):
-    """Run the three required analytical queries and print a formatted report."""
+def print_report(conn: sqlite3.Connection, source_file: str):
+    """Run the three required analytical queries, scoped to this run's source_file,
+    and print a formatted report."""
     sep = "=" * 65
 
     print(f"\n{BOLD}{sep}{RESET}")
@@ -653,11 +658,12 @@ def print_report(conn: sqlite3.Connection):
         FROM sensitivity_matches sm
         JOIN captured_flows cf ON sm.flow_id = cf.flow_id
         WHERE sm.sensitivity_level IN ('HIGH', 'CRITICAL')
+          AND cf.source_file = ?
         GROUP BY cf.source
         ORDER BY hit_count DESC
         LIMIT 20
     """
-    rows = conn.execute(q1).fetchall()
+    rows = conn.execute(q1, (source_file,)).fetchall()
     if rows:
         print(f"  {'Rank':<5} {'Website Host':<35} {'Hits':>6}")
         print(f"  {'-'*5} {'-'*35} {'-'*6}")
@@ -675,11 +681,11 @@ def print_report(conn: sqlite3.Connection):
     # -----------------------------------------------------------------------
     print(f"{BOLD}[Q2] TOTAL WORDS CAPTURED / PROCESSED{RESET}\n")
 
-    q2 = "SELECT COALESCE(SUM(word_count), 0) FROM captured_flows"
-    total_words = conn.execute(q2).fetchone()[0]
+    q2 = "SELECT COALESCE(SUM(word_count), 0) FROM captured_flows WHERE source_file = ?"
+    total_words = conn.execute(q2, (source_file,)).fetchone()[0]
 
-    q2b = "SELECT COUNT(*) FROM captured_flows"
-    total_flows = conn.execute(q2b).fetchone()[0]
+    q2b = "SELECT COUNT(*) FROM captured_flows WHERE source_file = ?"
+    total_flows = conn.execute(q2b, (source_file,)).fetchone()[0]
 
     print(f"  Total flows processed : {BOLD}{total_flows:,}{RESET}")
     print(f"  Total words processed : {BOLD}{total_words:,}{RESET}")
@@ -694,15 +700,17 @@ def print_report(conn: sqlite3.Connection):
 
     q3 = """
         SELECT
-            classification,
-            specific_type,
-            sensitivity_level,
+            sm.classification,
+            sm.specific_type,
+            sm.sensitivity_level,
             COUNT(*) AS occurrences
-        FROM sensitivity_matches
-        GROUP BY classification, specific_type
+        FROM sensitivity_matches sm
+        JOIN captured_flows cf ON sm.flow_id = cf.flow_id
+        WHERE cf.source_file = ?
+        GROUP BY sm.classification, sm.specific_type
         ORDER BY occurrences DESC
     """
-    rows = conn.execute(q3).fetchall()
+    rows = conn.execute(q3, (source_file,)).fetchall()
     if rows:
         print(f"  {'#':<5} {'Classification':<14} {'Specific Type':<25} "
               f"{'Severity':<10} {'Count':>6}")
@@ -721,12 +729,14 @@ def print_report(conn: sqlite3.Connection):
     # -----------------------------------------------------------------------
     print(f"{BOLD}[SUMMARY] MATCH COUNTS BY SEVERITY LEVEL{RESET}\n")
     q4 = """
-        SELECT sensitivity_level, COUNT(*) AS cnt
-        FROM sensitivity_matches
-        GROUP BY sensitivity_level
+        SELECT sm.sensitivity_level, COUNT(*) AS cnt
+        FROM sensitivity_matches sm
+        JOIN captured_flows cf ON sm.flow_id = cf.flow_id
+        WHERE cf.source_file = ?
+        GROUP BY sm.sensitivity_level
         ORDER BY cnt DESC
     """
-    sev_rows = conn.execute(q4).fetchall()
+    sev_rows = conn.execute(q4, (source_file,)).fetchall()
     if sev_rows:
         #citation: chatgpt 7/16/26
         max_count = max(cnt for _, cnt in sev_rows)
@@ -865,7 +875,7 @@ def process_flow_log(flow_log_path: str, db_path: str):
             with conn:  # Automatic transaction commit/rollback
                 insert_flow(
                     conn, flow_id, timestamp, source, url,
-                    method, content_type, word_count,
+                    method, content_type, word_count, flow_log_path,
                 )
                 if matches:
                     insert_matches(conn, flow_id, matches)
@@ -884,7 +894,7 @@ def process_flow_log(flow_log_path: str, db_path: str):
     print(f"    Total matches   : {total_matches:,}")
 
     # --- Analytical Report ---
-    print_report(conn)
+    print_report(conn, flow_log_path)
     conn.close()
 
 

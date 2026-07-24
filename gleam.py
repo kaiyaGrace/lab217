@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS rpc_calls (
     request_headers_json TEXT,
     response_headers_json TEXT,
     latency_ms REAL,
-    token_location TEXT,
+    token_location TEXT
 );
 
 CREATE TABLE IF NOT EXISTS http_flows_other (
@@ -231,6 +231,13 @@ class Gleam:
             if flow.response:
                 self.status_counts[flow.response.status_code] += 1
 
+            token_loc = None
+            req_headers = flow.request.headers
+            if any(k.lower() == "authorization" for k in req_headers.keys()):
+                token_loc = "header"
+            elif req_json and "token" in json.dumps(req_json).lower():
+                token_loc = "body"
+
             row = (
                 ts_req,
                 ts_resp,
@@ -250,14 +257,6 @@ class Gleam:
                 latency_ms,
                 token_loc,
             )
-
-            #citation: claude 7/24/26
-            token_loc = None
-            req_headers = flow.request.headers
-            if any(k.lower() == "authorization" for k in req_headers.keys()):
-                token_loc = "header"
-            elif req_json and "token" in json.dumps(req_json).lower():
-                token_loc = "body"
             self.rpc_buffer.append(row)
         else:
             snip_len = ctx.options.gleam_snippet_length
@@ -398,12 +397,14 @@ class Gleam:
             self.conn.executemany(
                 """INSERT INTO rpc_calls (
                     timestamp_request, timestamp_response, http_method, scheme,
-                    host, path, status_code, jsonrpc_version, rpc_method, rpc_id,
-                    params_json, result_json, error_json,
-                    request_headers_json, response_headers_json, latency_ms, token_location
+                    host, path, status_code, jsonrpc_version, rpc_method,
+                    rpc_id, params_json, result_json, error_json,
+                    request_headers_json, response_headers_json, latency_ms,
+                    token_location
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self.rpc_buffer,
             )
+            self.rpc_buffer.clear()
 
         if self.other_buffer:
             self.conn.executemany(

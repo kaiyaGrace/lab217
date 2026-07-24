@@ -662,31 +662,44 @@ def print_report(conn: sqlite3.Connection, source_file: str):
     # QUERY 1: Which source host has the most sensitive data?
     # Filter: severity HIGH or CRITICAL; group by source
     # -----------------------------------------------------------------------
+    #citation: claude 7/24/26
     print(f"{BOLD}[Q1] DESTINATION WEBSITES WITH THE MOST SENSITIVE DATA{RESET}")
-    print(f"     (HIGH + CRITICAL severity only, ranked by hit count)\n")
+    print(f"     (Top 10, ranked by CRITICAL > HIGH > MEDIUM > LOW hit counts)\n")
 
     q1 = """
         SELECT
             cf.source,
-            COUNT(sm.match_id) AS hit_count
+            SUM(CASE WHEN sm.sensitivity_level = 'CRITICAL' THEN 1 ELSE 0 END) AS critical_count,
+            SUM(CASE WHEN sm.sensitivity_level = 'HIGH'     THEN 1 ELSE 0 END) AS high_count,
+            SUM(CASE WHEN sm.sensitivity_level = 'MEDIUM'   THEN 1 ELSE 0 END) AS medium_count,
+            SUM(CASE WHEN sm.sensitivity_level = 'LOW'      THEN 1 ELSE 0 END) AS low_count,
+            COUNT(sm.match_id) AS total_hits
         FROM sensitivity_matches sm
         JOIN captured_flows cf ON sm.flow_id = cf.flow_id
-        WHERE sm.sensitivity_level IN ('HIGH', 'CRITICAL')
-          AND cf.source_file = ?
+        WHERE cf.source_file = ?
         GROUP BY cf.source
-        ORDER BY hit_count DESC
-        LIMIT 20
+        ORDER BY critical_count DESC, high_count DESC, medium_count DESC, low_count DESC, total_hits DESC
+        LIMIT 10
     """
     rows = conn.execute(q1, (source_file,)).fetchall()
     if rows:
-        print(f"  {'Rank':<5} {'Website Host':<35} {'Hits':>6}")
-        print(f"  {'-'*5} {'-'*35} {'-'*6}")
-        for rank, (source, hits) in enumerate(rows, 1):
-            bar = "█" * min(hits, 30)
-            color = RED if rank == 1 else RESET
-            print(f"  {color}{rank:<5} {source or '(unknown)':<35} {hits:>6}  {bar}{RESET}")
+        print(f"  {'Rank':<5} {'Website Host':<30} {'Crit':>5} {'High':>5} "
+              f"{'Med':>5} {'Low':>5} {'Total':>6}")
+        print(f"  {'-'*5} {'-'*30} {'-'*5} {'-'*5} {'-'*5} {'-'*5} {'-'*6}")
+        for rank, (source, crit, high, med, low, total) in enumerate(rows, 1):
+            # Color the row by the highest severity actually present
+            if crit:
+                color = RED
+            elif high:
+                color = YELLOW
+            elif med:
+                color = CYAN
+            else:
+                color = GREEN
+            print(f"  {color}{rank:<5} {source or '(unknown)':<30} "
+                  f"{crit:>5} {high:>5} {med:>5} {low:>5} {total:>6}{RESET}")
     else:
-        print("  No HIGH/CRITICAL matches found.\n")
+        print("  No sensitivity matches found.\n")
 
     print()
 

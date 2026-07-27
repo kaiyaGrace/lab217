@@ -88,6 +88,19 @@ CREATE TABLE IF NOT EXISTS ws_flows (
     direction_counts_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS ws_rpc_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp REAL,
+    host TEXT,
+    path TEXT,
+    direction TEXT,
+    jsonrpc_version TEXT,
+    rpc_method TEXT,
+    rpc_id TEXT,
+    payload_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wsrpc_host_path_method
+    ON ws_rpc_messages(host, path, rpc_method);
 CREATE INDEX IF NOT EXISTS idx_rpc_host_path_method
     ON rpc_calls(host, path, rpc_method);
 CREATE INDEX IF NOT EXISTS idx_rpc_ts_request
@@ -130,6 +143,7 @@ class Gleam:
         self.rpc_buffer = []
         self.other_buffer = []
         self.ws_buffer = []
+        self.ws_rpc_buffer = []
         self.unique_http_endpoints = set()   # (host, path)
         self.unique_rpc_endpoints = set()    # (host, path, rpc_method)
         self.rpc_hit_counts = Counter()      # (host, path, rpc_method) -> count
@@ -143,6 +157,7 @@ class Gleam:
         self._last_summary = time.time()
         # ws tracking keyed by flow.id -> dict of running state
         self._ws_state = {}
+        
 
     # ------------------------------------------------------------------
     # Setup / config
@@ -333,10 +348,36 @@ class Gleam:
         if state is None:
             return
         last = flow.websocket.messages[-1]
-        if last.from_client:
+        if last.from_client:    
             state["client_to_server"] += 1
         else:
             state["server_to_client"] += 1
+        
+        #new: inpsect payload content for JSON-RPC framing
+        #websocket messages can be text or binary; only try text ones :)
+        if last.is_text:
+            content = last.text
+        else:
+            try:
+                content = last.content.decode("utf-8")
+            except (UnicodeDecodeError, AttributeError):
+                content = None
+        
+        if content and self._looks_like_json(content):
+            parsed = _safe_json_loads(content)
+            if isinstance(parsed, dict) and "method" in parsed and (
+                "jsonrpc" in parsed or "id" in parsed or "params" in parsed
+            ):
+                row = (
+                    time.time(),
+                    state["host"],
+                    state["path"],  
+                    "client_to_server" if last.from_client else "server_to_client",
+                    parsed.get("jsonrpc"),
+                    parsed.get("method"),
+                    json.dumps(parsed.get("id")),
+                    json.dumps(parsed),
+                )
 
     def websocket_end(self, flow: http.HTTPFlow):
         state = self._ws_state.pop(flow.id, None)

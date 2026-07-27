@@ -1,3 +1,4 @@
+#citation: Claude
 """
 gleam.py — mitmproxy/mitmweb addon for tracking Grammarly endpoint behavior.
 
@@ -35,6 +36,7 @@ Tables:
 
 import json
 import sqlite3
+import socket
 import time
 from collections import Counter
 from datetime import datetime, timedelta
@@ -164,8 +166,12 @@ class Gleam:
     # ------------------------------------------------------------------
     def load(self, loader):
         loader.add_option(
-            name="gleam_db_path", typespec=str, default="gleam.db",
+            name="gleam_db_path", typespec=str,
+            default=f"gleam_{socket.gethostname()}.db",
             help="Path to the gleam SQLite database file.",
+            
+            # name="gleam_db_path", typespec=str, default="gleam.db",
+            # help="Path to the gleam SQLite database file.",
         )
         loader.add_option(
             name="gleam_grammarly_only", typespec=bool, default=True,
@@ -176,7 +182,11 @@ class Gleam:
             help="Number of buffered rows before an automatic batch insert.",
         )
         loader.add_option(
-            name="gleam_summary_path", typespec=str, default="gleam_summary",
+            # name="gleam_summary_path", typespec=str, default="gleam_summary",
+            # help="Filename prefix for the unique-endpoints summary file.",
+
+            name="gleam_summary_path", typespec=str,
+            default=f"gleam_summary_{socket.gethostname()}",
             help="Filename prefix for the unique-endpoints summary file.",
         )
         loader.add_option(
@@ -191,14 +201,27 @@ class Gleam:
             name="gleam_snippet_length", typespec=int, default=500,
             help="Max characters kept for non-JSON request/response body snippets.",
         )
-
+   
+        
     def running(self):
         # Called once mitmproxy is fully up; options are guaranteed to be set.
         db_path = ctx.options.gleam_db_path
-        self.conn = sqlite3.connect(db_path, isolation_level=None)  # autocommit off manually
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.executescript(DDL)
-        ctx.log.info(f"[gleam] database ready at {db_path}")
+        try:
+            self.conn = sqlite3.connect(db_path, isolation_level=None)
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.executescript(DDL)
+            ctx.log.info(f"[gleam] database ready at {db_path}")
+        except sqlite3.OperationalError as e:
+            ctx.log.error(f"[gleam] failed to open database at {db_path}: {e}")
+            self.conn = None
+    
+    # def running(self):
+    #     # Called once mitmproxy is fully up; options are guaranteed to be set.
+    #     db_path = ctx.options.gleam_db_path
+    #     self.conn = sqlite3.connect(db_path, isolation_level=None)  # autocommit off manually
+    #     self.conn.execute("PRAGMA journal_mode=WAL;")
+    #     self.conn.executescript(DDL)
+    #     ctx.log.info(f"[gleam] database ready at {db_path}")
 
     # ------------------------------------------------------------------
     # HTTP hooks
@@ -250,8 +273,13 @@ class Gleam:
             req_headers = flow.request.headers
             if any(k.lower() == "authorization" for k in req_headers.keys()):
                 token_loc = "header"
-            elif req_json and "token" in json.dumps(req_json).lower():
-                token_loc = "body"
+            elif req_json and isinstance(req_json.get("params"), dict) and \
+                any("token" in k.lower() for k in req_json["params"].keys()):
+                token_loc = "body"    
+            # elif req_json and any("token" in k.lower() for k in req_json.keys()):
+            #     token_loc = "body"
+            # elif req_json and "token" in json.dumps(req_json).lower():
+            #     token_loc = "body"
 
             row = (
                 ts_req,
@@ -378,6 +406,7 @@ class Gleam:
                     json.dumps(parsed.get("id")),
                     json.dumps(parsed),
                 )
+                self.ws_rpc_buffer.append(row)
 
     def websocket_end(self, flow: http.HTTPFlow):
         state = self._ws_state.pop(flow.id, None)
@@ -418,58 +447,141 @@ class Gleam:
             self._write_summary("gleam_summary_live")
             self._last_summary = time.time()
 
+        # Sweep any websocket state that never got an websocket_end (abrupt
+        # disconnects, proxy restarts) so self._ws_state doesn't leak memory
+        # over a long-running capture.
+        stale_cutoff = time.time() - 3600  # 1 hour with no activity
+        stale_ids = [
+            fid for fid, state in self._ws_state.items()
+            if state["timestamp_open"] < stale_cutoff
+        ]
+        for fid in stale_ids:
+            state = self._ws_state.pop(fid)
+            ctx.log.warn(f"[gleam] dropping stale ws state for {state['host']}{state['path']} (no websocket_end received)")
+
+
     def _maybe_flush(self):
         batch_size = ctx.options.gleam_batch_size
         if (
             len(self.rpc_buffer) >= batch_size
             or len(self.other_buffer) >= batch_size
             or len(self.ws_buffer) >= batch_size
+            or len(self.ws_rpc_buffer) >= batch_size
         ):
             self._flush()
 
+    
+   
     def _flush(self, force=False):
-        if not (self.rpc_buffer or self.other_buffer or self.ws_buffer):
+        if not (self.rpc_buffer or self.other_buffer or self.ws_buffer or self.ws_rpc_buffer):
             self._last_flush = time.time()
             return
         if self.conn is None:
             return
-
-        if self.rpc_buffer:
-            self.conn.executemany(
-                """INSERT INTO rpc_calls (
-                    timestamp_request, timestamp_response, http_method, scheme,
-                    host, path, status_code, jsonrpc_version, rpc_method,
-                    rpc_id, params_json, result_json, error_json,
-                    request_headers_json, response_headers_json, latency_ms,
-                    token_location
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                self.rpc_buffer,
-            )
+        try:
+            self.conn.execute("BEGIN")
+            if self.rpc_buffer:
+                self.conn.executemany(
+                    """INSERT INTO rpc_calls (
+                        timestamp_request, timestamp_response, http_method, scheme,
+                        host, path, status_code, jsonrpc_version, rpc_method,
+                        rpc_id, params_json, result_json, error_json,
+                        request_headers_json, response_headers_json, latency_ms,
+                        token_location
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self.rpc_buffer,
+                )
+            if self.other_buffer:
+                self.conn.executemany(
+                    """INSERT INTO http_flows_other (
+                        timestamp_request, timestamp_response, http_method, scheme,
+                        host, path, status_code, content_type,
+                        request_body_snippet, response_body_snippet
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self.other_buffer,
+                )
+            if self.ws_buffer:
+                self.conn.executemany(
+                    """INSERT INTO ws_flows (
+                        timestamp_open, timestamp_close, scheme, host, path,
+                        message_count, direction_counts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    self.ws_buffer,
+                )
+            if self.ws_rpc_buffer:
+                self.conn.executemany(
+                    """INSERT INTO ws_rpc_messages (
+                        timestamp, host, path, direction, jsonrpc_version,
+                        rpc_method, rpc_id, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    self.ws_rpc_buffer,
+                )
+            self.conn.commit()
             self.rpc_buffer.clear()
-
-        if self.other_buffer:
-            self.conn.executemany(
-                """INSERT INTO http_flows_other (
-                    timestamp_request, timestamp_response, http_method, scheme,
-                    host, path, status_code, content_type,
-                    request_body_snippet, response_body_snippet
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                self.other_buffer,
-            )
             self.other_buffer.clear()
-
-        if self.ws_buffer:
-            self.conn.executemany(
-                """INSERT INTO ws_flows (
-                    timestamp_open, timestamp_close, scheme, host, path,
-                    message_count, direction_counts_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                self.ws_buffer,
-            )
             self.ws_buffer.clear()
+            self.ws_rpc_buffer.clear()
+        except Exception as e:
+            self.conn.rollback()
+            ctx.log.error(f"[gleam] flush failed, buffers retained for retry: {e}")
+            # don't clear buffers — retry next tick
+        self._last_flush = time.time()    
+    
+    
+    
+    # def _flush(self, force=False):
+    #     if not (self.rpc_buffer or self.other_buffer or self.ws_buffer or self.ws_rpc_buffer):
+    #         self._last_flush = time.time()
+    #         return
+    #     if self.conn is None:
+    #         return
 
-        self.conn.commit()
-        self._last_flush = time.time()
+    #     if self.rpc_buffer:
+    #         self.conn.executemany(
+    #             """INSERT INTO rpc_calls (
+    #                 timestamp_request, timestamp_response, http_method, scheme,
+    #                 host, path, status_code, jsonrpc_version, rpc_method,
+    #                 rpc_id, params_json, result_json, error_json,
+    #                 request_headers_json, response_headers_json, latency_ms,
+    #                 token_location
+    #             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    #             self.rpc_buffer,
+    #         )
+    #         self.rpc_buffer.clear()
+
+    #     if self.other_buffer:
+    #         self.conn.executemany(
+    #             """INSERT INTO http_flows_other (
+    #                 timestamp_request, timestamp_response, http_method, scheme,
+    #                 host, path, status_code, content_type,
+    #                 request_body_snippet, response_body_snippet
+    #             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    #             self.other_buffer,
+    #         )
+    #         self.other_buffer.clear()
+
+    #     if self.ws_buffer:
+    #         self.conn.executemany(
+    #             """INSERT INTO ws_flows (
+    #                 timestamp_open, timestamp_close, scheme, host, path,
+    #                 message_count, direction_counts_json
+    #             ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+    #             self.ws_buffer,
+    #         )
+    #         self.ws_buffer.clear()
+
+    #     if self.ws_rpc_buffer:
+    #         self.conn.executemany(
+    #             """INSERT INTO ws_rpc_messages (
+    #                  timestamp, host, path, direction, jsonrpc_version,
+    #                 rpc_method, rpc_id, payload_json
+    #             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+    #             self.ws_rpc_buffer,
+    #         )
+    #         self.ws_rpc_buffer.clear()
+
+    #     self.conn.commit()
+    #     self._last_flush = time.time()
 
     # ------------------------------------------------------------------
     # Live + final summary of unique Grammarly endpoints

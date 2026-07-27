@@ -1,104 +1,102 @@
-# Glimpse 👀
+# Grammarly Traffic Analysis Toolkit
 
-**Glimpse** is a lightweight Python tool that analyzes **mitmproxy flow logs** to identify sensitive information captured from **Grammarly** network traffic.
-
-It scans HTTP requests and responses for common types of sensitive data (PII, PHI, PCI-DSS, and credentials), summarizes the results in the terminal, and stores them in a **SQLite database** for further analysis using SQL.
+Two complementary tools for inspecting Grammarly's network behavior through a transparent mitmproxy setup: **GLIMPSE**, a post-hoc sensitivity analyzer for saved flow logs, and **GLEAN**, a live endpoint/RPC behavior monitor.
 
 ---
 
-## Features
+## Contents
 
-- Detects common sensitive information including:
-  - Passwords
-  - API Keys & Tokens
-  - Credit Card Numbers
-  - Social Security Numbers
-  - Medical Record Numbers
-  - ICD Codes
-  - Phone Numbers
-  - Email Addresses
-  - Usernames
-  - Street Addresses
-- Filters non-text and static assets to reduce noise
-- Generates a terminal summary report
-- Saves structured results to SQLite for additional querying
+- [Tool Overview](#tool-overview)
+- [Transparent Proxy Setup](#transparent-proxy-setup)
+- [GLIMPSE](#glimpse)
+- [GLEAN](#glean)
+- [Screenshots](#screenshots)
 
 ---
 
-## Prerequisites
+## Tool Overview
 
-Before running Glimpse, make sure you have:
+| Tool | Acronym | Purpose |
+|------|---------|---------|
+| **GLIMPSE** | Grammarly Log Inspection for Metadata, Privacy & Sensitive-data Evaluation | Analyzes **saved** mitmweb flow logs offline to detect PII, PHI, PCI-DSS, and credential data transmitted to Grammarly's endpoints. |
+| **GLEAN** | Grammarly Live Endpoint Analysis & Navigation | Runs **live** (or against saved logs) to inventory Grammarly's JSON/RPC endpoints, track schema drift, and flag anomalies in real time. |
 
-- Python **3.10+**
-- **mitmproxy** installed
-- A mitmproxy flow log (`.flow` file)
-- SQLite (included with most Python installations)
+Both tools consume traffic captured through a transparent proxy running on **Frodo**, routed from the target client (**Legolas**).
 
-### Install Dependencies
+---
+
+## Transparent Proxy Setup
+
+**Prerequisites:** certificates configured and mitmproxy installed on Frodo.
+
+On Frodo:
 
 ```bash
-pip install mitmproxy
+./runMitmWebRules
+./tspMitmWeb
 ```
+
+This routes client traffic from Legolas through Frodo's mitmweb instance, which both GLIMPSE and GLEAN read from.
 
 ---
 
-## Usage
+## GLIMPSE
 
-### 1. Capture Traffic
+`analyze_flows.py` — reads a saved mitmproxy flow log, runs a local detection pipeline over HTTP request/response payloads, and writes structured results to SQLite alongside a CLI sensitivity report.
 
-Run mitmproxy/mitmweb and save a flow log.
+**Prerequisite:** a downloaded mitmweb flow log.
 
-Example:
+> **Important:** running GLIMPSE aggregates data into the database across runs. Flush the database before each new run to keep results scoped to a single log:
+>
+> ```bash
+> rm flow_analysis.db
+> ```
+
+**Run on Frodo:**
 
 ```bash
-mitmweb -w grammarly.flow
+python3 ~/github/glimpse/analyze_flows_v9.py ~/mitmWebLogs/mitmWeb_p5
 ```
+
+GLIMPSE outputs a report covering:
+- Destination hosts ranked by sensitive-data hit count (Critical/High/Medium/Low)
+- Total flows and words processed
+- Sensitive data classifications (Credentials, PII, PCI-DSS, PHI) with severity breakdown
 
 ---
 
-### 2. Run Glimpse
+## GLEAN
+
+A mitmproxy/mitmweb addon and live dashboard that logs Grammarly's JSON-RPC endpoint behavior into SQLite, tracking endpoint inventory and schema-change anomalies as they occur.
+
+**Prerequisite:** mitmweb and certificates configured (see [Transparent Proxy Setup](#transparent-proxy-setup)).
+
+**Run on Frodo:**
 
 ```bash
-python3 analyze_flows.py grammarly.flow
+./runMitmWebRules
+./tspMitmWeb
 ```
 
-Or specify an output database:
+Then, from the `glean` directory, launch the live dashboard:
 
 ```bash
-python3 analyze_flows.py grammarly.flow --db glimpse.db
+cd ~/glean
+python3 -m glean.cli attach --db data/glean.db --label control
 ```
 
----
-
-### 3. View Results
-
-Glimpse will:
-
-- Analyze the captured Grammarly traffic
-- Display a summary report in the terminal
-- Save all findings into the SQLite database
+GLEAN's live dashboard shows:
+- A running endpoint inventory (path, hit count, first/last seen)
+- Detected anomalies (new endpoints, new/disappeared fields, type changes) with review status
 
 ---
 
-## Output
+## Screenshots
 
-The SQLite database contains two tables:
+**GLEAN — live endpoint inventory and anomaly detection:**
 
-- **captured_flows** – metadata about each analyzed HTTP flow
-- **sensitivity_matches** – all detected sensitive information and classifications
+![GLEAN live dashboard showing endpoint inventory and schema-change anomalies](screenshots/glean_live_dashboard.png)
 
-This database can be queried directly using SQLite or any SQL analysis tool.
+**GLIMPSE — PII/PHI sensitivity analysis report:**
 
----
-
-## Notes
-
-- Glimpse analyzes **only Grammarly traffic** contained within the provided mitmproxy flow log.
-- Sensitive values are **partially masked** before being stored in the database.
-- Static assets (JavaScript, images, CSS, fonts, etc.) are automatically ignored to improve performance and reduce false positives.
-
----
-
-## License
-
-Created for educational and cybersecurity research purposes.
+![GLIMPSE report showing sensitive data by destination host and classification](screenshots/glimpse_sensitivity_report.png)

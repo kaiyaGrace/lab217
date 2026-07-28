@@ -345,6 +345,9 @@ class Gleam:
             "",
         )
         self.other_buffer.append(row)
+        self.unique_http_endpoints.add((host, path))
+        self.http_hit_counts[(host, path)] += 1
+        self.other_flow_total += 1
         self._maybe_flush()
 
     @staticmethod

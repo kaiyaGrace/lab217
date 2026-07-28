@@ -125,7 +125,9 @@ PATTERNS = [
         # Matches: password=secret, "password":"abc", passwd = "x", etc.
         "regex": re.compile(
             # \b ensures we don't match 'pass' inside 'bypass', 'surpass', 'compass', etc.
-            r'(?i)\b(password|passwd|pass|pwd)\s*[=:]\s*["\']?(\S{4,})["\']?',
+            # ["\']? after the key word handles JSON's `"password":"value"` shape,
+            # where the key's closing quote sits between the word and the colon.
+            r'(?i)\b(password|passwd|pass|pwd)["\']?\s*[=:]\s*["\']?([^\s"\',}]{4,})',
             re.IGNORECASE,
         ),
         "classification": "Credentials",
@@ -142,7 +144,7 @@ PATTERNS = [
         # Matches: api_key="abc123", "secret": "xyz", bearer <token>, etc.
         "regex": re.compile(
             r'(?i)(api[_\-]?key|api[_\-]?secret|secret[_\-]?key|access[_\-]?token'
-            r'|auth[_\-]?token|bearer)\s*[=:\s]+["\']?([A-Za-z0-9\-_\.]{8,})["\']?',
+            r'|auth[_\-]?token|bearer)["\']?\s*[=:\s]+["\']?([A-Za-z0-9\-_\.]{8,})["\']?',
             re.IGNORECASE,
         ),
         "classification": "Credentials",
@@ -295,7 +297,7 @@ PATTERNS = [
             # headers, JSON keys like "user_id", "user_data") and generated masses
             # of false positives. 'username' and 'user_name' are specific enough
             # to only appear in actual credential/form contexts.
-            r'(?i)\b(username|user_name)\s*[=:]\s*["\']?([A-Za-z0-9_@.\-]{3,})["\']?'
+            r'(?i)\b(username|user_name)["\']?\s*[=:]\s*["\']?([A-Za-z0-9_@.\-]{3,})["\']?'
         ),
         "classification": "PII",
         "specific_type": "Username",
@@ -987,3 +989,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

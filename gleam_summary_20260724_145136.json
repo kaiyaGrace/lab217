@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-07-24T14:51:36.149657",
+  "session_duration": "0:00:00",
+  "totals": {
+    "rpc_calls": 0,
+    "other_http_flows": 32,
+    "websocket_connections": 0,
+    "unique_rpc_endpoints": 0,
+    "unique_http_endpoints": 10
+  },
+  "status_code_counts": {
+    "200": 28,
+    "204": 4
+  },
+  "rpc_endpoints": [],
+  "other_http_endpoints": [
+    {
+      "host": "inkwell.femetrics.grammarly.io",
+      "path": "/batch/import",
+      "hits": 8
+    },
+    {
+      "host": "f-log-inkwell.grammarly.io",
+      "path": "/batch/log",
+      "hits": 8
+    },
+    {
+      "host": "win-extension.femetrics.grammarly.io",
+      "path": "/batch/import",
+      "hits": 6
+    },
+    {
+      "host": "gnar.grammarly.com",
+      "path": "/events",
+      "hits": 2
+    },
+    {
+      "host": "auth.grammarly.com",
+      "path": "/auth/v5/api/userinfo",
+      "hits": 2
+    },
+    {
+      "host": "capi.grammarly.com",
+      "path": "/api/configuration/cheetah/v1/settings",
+      "hits": 2
+    },
+    {
+      "host": "auth.grammarly.com",
+      "path": "/tokens/v4/api/oauth2/token",
+      "hits": 1
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/authorship/v1/user/1508776617/settings",
+      "hits": 1
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/treatment/get",
+      "hits": 1
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/gates/get",
+      "hits": 1
+    }
+  ]
+}

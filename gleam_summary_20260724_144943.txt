@@ -1,0 +1,29 @@
+============================================================
+  GLEAM — Grammarly Endpoint Summary
+============================================================
+  Generated:        2026-07-24T14:49:43.838453
+  Session duration: 0:00:00
+------------------------------------------------------------
+  Totals
+    RPC calls captured:        0
+    Other HTTP flows captured: 32
+    WebSocket connections:     0
+    Unique RPC endpoints:      0
+    Unique HTTP endpoints:     10
+    Status codes:              200: 28, 204: 4
+------------------------------------------------------------
+  RPC endpoints (by call volume)
+    (none yet)
+------------------------------------------------------------
+  Other Grammarly endpoints (non-JSON-RPC)
+    [   8x]  inkwell.femetrics.grammarly.io/batch/import
+    [   8x]  f-log-inkwell.grammarly.io/batch/log
+    [   6x]  win-extension.femetrics.grammarly.io/batch/import
+    [   2x]  capi.grammarly.com/api/configuration/cheetah/v1/settings
+    [   2x]  auth.grammarly.com/auth/v5/api/userinfo
+    [   2x]  gnar.grammarly.com/events
+    [   1x]  gateway.grammarly.com/authorship/v1/user/1508776617/settings
+    [   1x]  gateway.grammarly.com/experimentation/treatment/get
+    [   1x]  gateway.grammarly.com/experimentation/gates/get
+    [   1x]  auth.grammarly.com/tokens/v4/api/oauth2/token
+============================================================

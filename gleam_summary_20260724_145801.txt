@@ -1,0 +1,181 @@
+============================================================
+  GLEAM — Grammarly Endpoint Summary
+============================================================
+  Generated:        2026-07-24T14:58:01.646576
+  Session duration: 0:00:33
+------------------------------------------------------------
+  Totals
+    RPC calls captured:        0
+    Other HTTP flows captured: 4926
+    WebSocket connections:     133
+    Unique RPC endpoints:      0
+    Unique HTTP endpoints:     162
+    Status codes:              101: 133, 200: 4621, 201: 1, 204: 59, 302: 45, 304: 52, 401: 2, 403: 12, 404: 1
+------------------------------------------------------------
+  RPC endpoints (by call volume)
+    (none yet)
+------------------------------------------------------------
+  Other Grammarly endpoints (non-JSON-RPC)
+    [1100x]  win-extension.femetrics.grammarly.io/batch/import
+    [ 659x]  gateway.grammarly.com/experimentation/treatment/get
+    [ 642x]  gnar.grammarly.com/lite
+    [ 604x]  inkwell.femetrics.grammarly.io/batch/import
+    [ 532x]  gnar.grammarly.com/events
+    [ 403x]  in.grammarly.com/v1/events
+    [ 214x]  capi.grammarly.com/fpws
+    [ 113x]  gateway.grammarly.com/experimentation/gates/get
+    [  95x]  f-log-inkwell.grammarly.io/batch/log
+    [  80x]  in.grammarly.com/v1/events/ingestion_front_end
+    [  52x]  capi.grammarly.com/freews
+    [  45x]  f-log-assistant.grammarly.io/log
+    [  44x]  applet-bundles.grammarly.net/applets/assistant
+    [  43x]  applet-bundles.grammarly.net/bundles/assistant/140.2.1/index.html
+    [  41x]  applet-bundles.grammarly.net/runtimes/v11/runtime.js
+    [  40x]  capi.grammarly.com/api/configuration/cheetah/v1/settings
+    [  40x]  auth.grammarly.com/auth/v5/api/userinfo
+    [  34x]  assistant.femetrics.grammarly.io/batch/import
+    [  24x]  auth.grammarly.com/tokens/v4/api/oauth2/token
+    [  18x]  f-log-editor.grammarly.io/logv2
+    [  14x]  f-log-win-extension.grammarly.io/logv2
+    [  13x]  gateway.grammarly.com/passport/api/v1/passport
+    [  12x]  goldengate.grammarly.com/skills/users/1508776617/skills
+    [  11x]  gateway.grammarly.com/uhub/configuration
+    [   9x]  treatment.grammarly.com/treatment/get
+    [   9x]  update-windows.grammarly.com/update/llamaWindows
+    [   4x]  subscription.grammarly.com/api/v1/subscription
+    [   4x]  gateway.grammarly.com/experimentation/properties
+    [   2x]  subscription.grammarly.com/api/v1/referrals/info
+    [   2x]  gateway.grammarly.com/experimentation/properties/showDesktopIntegrationExtensionToggle
+    [   2x]  gateway.grammarly.com/privacy/v1/api/data-sharing/user
+    [   2x]  subscription.grammarly.com/api/v1/sku-type
+    [   2x]  auth.grammarly.com/auth/v3/user/oranonymous
+    [   2x]  capi.grammarly.com/api/configuration/suggestion-bundles/v1/settings
+    [   2x]  f-log-editor-debug.grammarly.io/logv2
+    [   2x]  assets.grammarly.com/emoji/v1/1f91d.2x.png
+    [   2x]  goldengate.grammarly.com/institution/api/institution/admin/institution_info
+    [   2x]  auth.grammarly.com/auth/v3/user
+    [   2x]  gateway.grammarly.com/health
+    [   2x]  gateway.grammarly.com/vito/plans
+    [   2x]  auth.grammarly.com/auth/v3/user/bridge/check-eligibility/coda
+    [   2x]  assets.grammarly.com/emoji/v1/1f3af.2x.png
+    [   2x]  gateway.grammarly.com/experimentation/properties/
+    [   2x]  gateway.grammarly.com/uhub/events
+    [   2x]  dox.grammarly.com/documents
+    [   2x]  assets.grammarly.com/emoji/v1/1f917.2x.png
+    [   2x]  gateway.grammarly.com/mise/api/v1/iterable/access/token
+    [   2x]  gateway.grammarly.com/subscription/api/v2/support-portal/userInfo
+    [   2x]  gateway.grammarly.com/vito/special-offers
+    [   2x]  website.femetrics.grammarly.io/batch/import
+    [   2x]  subscription.grammarly.com/api/v2/support-portal/chatbot/token
+    [   2x]  assets.grammarly.com/emoji/v1/261d.2x.png
+    [   2x]  assets.grammarly.com/emoji/v1/1f455.2x.png
+    [   2x]  gateway.grammarly.com/subscription/api/v1/subscription
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/6e5e196e-66b1a94fba27f601.js
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/11cd3a9b870d8cea.css
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT4TV234GMK6HGHFMAXM8
+    [   1x]  static-web.grammarly.com/web-heartbeat/latest/index.js
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/26ad7c2b7243e22c.css
+    [   1x]  assets.grammarly.com/emoji/v1/1f610.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/6497-0a8c419515b66d21.js
+    [   1x]  assets.grammarly.com/icons/v1/gds-icon-ggo-action-shorten.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/3234.be94bafbca8e422c.js
+    [   1x]  gateway.grammarly.com/experimentation/treatment/log
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/7564.a57ed589727aa0c0.js
+    [   1x]  coda.grammarly.com/internalAppApi/doclist/recent
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/2581.0d6df08d5ee7c339.js
+    [   1x]  support.grammarly.com/hc/activity
+    [   1x]  assets.grammarly.com/emoji/v1/1f914.2x.png
+    [   1x]  static-web.grammarly.com/shared/fonts/glyph-bold.woff2
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/66378a4254fb9db8.css
+    [   1x]  assets.grammarly.com/emoji/v1/1f44b.2x.png
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/5423x1zYeb1zyldyyUdYPI/59d1d5459f87ee613c5ee1474c1dc9c5/ICONS__30_.svg
+    [   1x]  go.grammarly.com/analytics
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5S85C2BQZK6X4ZVMCAV4
+    [   1x]  assets.grammarly.com/emoji/v1/1f60a.2x.png
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5RR5AS8XV9SKQP7FS6J1
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT67W142QH6S0VKSTREYR
+    [   1x]  assets.grammarly.com/emoji/v1/1f642.2x.png
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT43MV98QKSSQ85Y9M3AQ
+    [   1x]  assets.grammarly.com/emoji/v1/1f454.2x.png
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT1YPZJP3VQJVC6HGA4M1
+    [   1x]  support.grammarly.com/hc/theming_assets/32923/2854956/style.css
+    [   1x]  assets.grammarly.com/emoji/v1/1f5bc.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/3446.2f43a1ffbde3f5c1.js
+    [   1x]  assets.grammarly.com/emoji/v1/1f607.2x.png
+    [   1x]  assets.grammarly.com/icons/v1/gds-icon-ggo-action-make-it-personal.2x.png
+    [   1x]  assets.grammarly.com/emoji/v1/1f913.2x.png
+    [   1x]  assets.grammarly.com/emoji/v1/1f929.2x.png
+    [   1x]  assets.grammarly.com/icons/v1/gds-icon-ggo-action-simplify.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/afeb416bd6ea3894.css
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/67Dl0aecY6JEAJ61q42Iwh/cc42b781eda0d0299b5254b23204c9c9/Frame_2055245682.svg
+    [   1x]  static-web.grammarly.com/shared/fonts/matter-semi-bold.woff2
+    [   1x]  support.grammarly.com/api/v2/requests.json
+    [   1x]  support.grammarly.com/hc/theming_assets/01KB0826J1HQ60ESX1SHSSZ6DK
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/4902.96a5571238a2af78.js
+    [   1x]  assets.grammarly.com/emoji/v1/1f60c.2x.png
+    [   1x]  www.grammarly.com/api/tracking/load
+    [   1x]  assets.grammarly.com/sdui/v1/magic-document.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/1a192442-332914e99bef1049.js
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5SEFXEG1EKJCJZ42AZQ4
+    [   1x]  static-web.grammarly.com/shared/fonts/glyph-regular.woff2
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT684AW9802Y6VJF5J3EY
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/4957.262428f454a2402a.js
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/framework-9188fd1d264b3ab9.js
+    [   1x]  assets.grammarly.com/emoji/v1/1f4a1.2x.png
+    [   1x]  www.grammarly.com/css/transcend-airgap.css
+    [   1x]  support.grammarly.com/hc/theming_assets/01KQZ04BZH071BEY5A1AYQ2HF0
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5S1JGTEZYXMBJ3CKBPHX
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/main-056f5034ee75ac0f.js
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5SZKJNZ5P7QT6FJPF69J
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/27203ff1a31c1d3e.css
+    [   1x]  static-web.grammarly.com/shared/fonts/matter-medium.woff2
+    [   1x]  editor.femetrics.grammarly.io/batch/import
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5S113PH9BW1TC1ZM25RP
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT69TK9XZ8J984DXQZTG3
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT2WSVN7PZTM4S8NXZHCZ
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/pages/render-1df5ea362bf639f5.js
+    [   1x]  assets.grammarly.com/emoji/v1/1f60d.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/pages/_app-20531691b7ff54d1.js
+    [   1x]  support.grammarly.com/hc/theming_assets/32923/2854956/script.js
+    [   1x]  assets.grammarly.com/icons/v1/gds-icon-ggo-action-make-it-professional.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/5182367ecb17ba61.css
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/5J6bEVGOrnZvAXNVfEwi2Q/85ef555e9b143dceeb2b5421837d5316/ICONS__29_.svg
+    [   1x]  support.grammarly.com/hc/en-us/articles/4403227220237-Is-Grammarly-HIPAA-compliant
+    [   1x]  assets.grammarly.com/emoji/v1/1f1fa-1f1f8.svg
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/16iyP4HxLGn8HRUVz73yxf/bb23f56b624f90a12dd95f5d379bc9df/Frame_2055245639.svg
+    [   1x]  denali-static.grammarly.com/js/5d42532a24eda5b54879/vendor-e~ae~ci~cb~as~mp.js
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT3R76SQ3MWB33MVEHJ51
+    [   1x]  assets.grammarly.com/emoji/v1/1f44d.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/2810.2a82a60015e534cd.js
+    [   1x]  assets.grammarly.com/icons/v1/gds-icon-ggo-action-improve.2x.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/8aa1SwZmUdTTBQ_xRC1J4/_buildManifest.js
+    [   1x]  assets.grammarly.com/emoji/v1/1f4ad.2x.png
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT3VKRH22X382D0MXNXSQ
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5T6BS1EEED7WPY7JX62V
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/css/8f5d1d401fc71ea3.css
+    [   1x]  assets.grammarly.com/icons/v1/gds-icon-ggo-action-generate-ideas-category.2x.png
+    [   1x]  applet-bundles.grammarly.net/favicon.ico
+    [   1x]  www.grammarly.com/privacy
+    [   1x]  denali-static.grammarly.com/js/8169f26575c8eb4d7fb3/runtime.js
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/4p0YxlEhKBkGTE3g1oX6Fh/933dc8432e07d91de538d02243be0266/square_image__1_.png
+    [   1x]  assets.grammarly.com/emoji/v1/1f92d.2x.png
+    [   1x]  www.grammarly.com/
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/8aa1SwZmUdTTBQ_xRC1J4/_ssgManifest.js
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/7248.435b716bf1f28dcf.js
+    [   1x]  support.grammarly.com/api/v2/help_center/en-us/articles/4403227220237/stats/view.json
+    [   1x]  app.grammarly.com/
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/5082-f108c72735a88874.js
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT2FM04Y7K940XV55PJG6
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5T7D5ETZCN3WSSRGETHY
+    [   1x]  assets.grammarly.com/emoji/v1/1f58a.2x.png
+    [   1x]  support.grammarly.com/hc/theming_assets/01JYHF5SSANKF3GB4AFRB1XEGV
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/4956.62e09d77974d2c0e.js
+    [   1x]  assets.grammarly.com/sdui/v1/success-impression.2x.png
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/77xEyv3tvgGYDQjdo3vljv/dd8d9df9705ac5b3759dbca9738da607/ICONS__28_.svg
+    [   1x]  support.grammarly.com/hc/theming_assets/01HZAXT3GMDNWVQRD5AD6NPM0C
+    [   1x]  assets.grammarly.com/sdui/v1/star.2x.png
+    [   1x]  denali-static.grammarly.com/js/5b4b8f4eda52c3c6f233/default-mp.js
+    [   1x]  static.institution.grammarly.com/logo/ec8c59d1a4c7b0698cda682c3ee2f69ed3d7279d.png
+    [   1x]  static-web.grammarly.com/cms/master/_next/static/chunks/webpack-7717e9e0ed3d9bc6.js
+    [   1x]  static-web.grammarly.com/1e6ajr2k4140/ltlKbGWebGgQGEVfOIszz/2cbb6297c790dab63dcd7a0b2ff6dd4f/Frame_2055245684__1_.svg
+============================================================

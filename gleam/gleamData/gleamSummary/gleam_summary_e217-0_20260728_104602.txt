@@ -1,0 +1,19 @@
+============================================================
+  GLEAM — Grammarly Endpoint Summary
+============================================================
+  Generated:        2026-07-28T10:46:02.744074
+  Session duration: 0:00:00
+------------------------------------------------------------
+  Totals
+    RPC calls captured:        0
+    Other HTTP flows captured: 0
+    WebSocket connections:     0
+    Unique RPC endpoints:      0
+    Unique HTTP endpoints:     0
+------------------------------------------------------------
+  RPC endpoints (by call volume)
+    (none yet)
+------------------------------------------------------------
+  Other Grammarly endpoints (non-JSON-RPC)
+    (none yet)
+============================================================

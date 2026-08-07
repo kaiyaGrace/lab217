@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-07-28T10:45:50.851345",
+  "session_duration": "0:00:00",
+  "totals": {
+    "rpc_calls": 0,
+    "other_http_flows": 0,
+    "websocket_connections": 0,
+    "unique_rpc_endpoints": 0,
+    "unique_http_endpoints": 0
+  },
+  "status_code_counts": {},
+  "rpc_endpoints": [],
+  "other_http_endpoints": []
+}

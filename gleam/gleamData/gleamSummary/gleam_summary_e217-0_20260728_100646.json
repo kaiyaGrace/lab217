@@ -1,0 +1,206 @@
+{
+  "generated_at": "2026-07-28T10:06:46.966704",
+  "session_duration": "0:00:00",
+  "totals": {
+    "rpc_calls": 0,
+    "other_http_flows": 229,
+    "websocket_connections": 4,
+    "unique_rpc_endpoints": 0,
+    "unique_http_endpoints": 37
+  },
+  "status_code_counts": {
+    "101": 4,
+    "200": 211,
+    "204": 7,
+    "302": 4,
+    "304": 3
+  },
+  "rpc_endpoints": [],
+  "other_http_endpoints": [
+    {
+      "host": "inkwell.femetrics.grammarly.io",
+      "path": "/batch/import",
+      "hits": 57
+    },
+    {
+      "host": "f-log-win-extension.grammarly.io",
+      "path": "/logv2",
+      "hits": 18
+    },
+    {
+      "host": "win-extension.femetrics.grammarly.io",
+      "path": "/batch/import",
+      "hits": 17
+    },
+    {
+      "host": "gnar.grammarly.com",
+      "path": "/events",
+      "hits": 16
+    },
+    {
+      "host": "f-log-inkwell.grammarly.io",
+      "path": "/batch/log",
+      "hits": 14
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/treatment/get",
+      "hits": 14
+    },
+    {
+      "host": "in.grammarly.com",
+      "path": "/v1/events",
+      "hits": 9
+    },
+    {
+      "host": "capi.grammarly.com",
+      "path": "/fpws",
+      "hits": 8
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/ingest-api/v1/events/ingestion_front_end",
+      "hits": 7
+    },
+    {
+      "host": "win-extension.femetrics.grammarly.io",
+      "path": "/import",
+      "hits": 7
+    },
+    {
+      "host": "auth.grammarly.com",
+      "path": "/auth/v5/api/userinfo",
+      "hits": 6
+    },
+    {
+      "host": "capi.grammarly.com",
+      "path": "/api/configuration/cheetah/v1/settings",
+      "hits": 6
+    },
+    {
+      "host": "in.grammarly.com",
+      "path": "/v1/events/ingestion_front_end",
+      "hits": 6
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/passport/api/v1/passport",
+      "hits": 5
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/gates/get",
+      "hits": 4
+    },
+    {
+      "host": "applet-bundles.grammarly.net",
+      "path": "/bundles/assistant/140.2.1/index.html",
+      "hits": 4
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/uhub/configuration",
+      "hits": 4
+    },
+    {
+      "host": "applet-bundles.grammarly.net",
+      "path": "/applets/assistant",
+      "hits": 4
+    },
+    {
+      "host": "applet-bundles.grammarly.net",
+      "path": "/runtimes/v11/runtime.js",
+      "hits": 3
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/properties/",
+      "hits": 2
+    },
+    {
+      "host": "capi.grammarly.com",
+      "path": "/api/configuration/suggestion-bundles/v1/settings",
+      "hits": 2
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/authorship/v1/user/1508776617/settings",
+      "hits": 2
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/privacy/v1/api/data-sharing/user",
+      "hits": 2
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/mise/api/v1/iterable/access/token",
+      "hits": 2
+    },
+    {
+      "host": "update-windows.grammarly.com",
+      "path": "/update/llamaWindows",
+      "hits": 2
+    },
+    {
+      "host": "static-web.grammarly.com",
+      "path": "/shared/fonts/product/v1/matter-semibold.woff2",
+      "hits": 1
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/health",
+      "hits": 1
+    },
+    {
+      "host": "auth.grammarly.com",
+      "path": "/tokens/v4/api/oauth2/token",
+      "hits": 1
+    },
+    {
+      "host": "static-web.grammarly.com",
+      "path": "/shared/fonts/product/v1/inter-regular.woff2",
+      "hits": 1
+    },
+    {
+      "host": "static-web.grammarly.com",
+      "path": "/shared/fonts/product/v1/inter-semibold.woff2",
+      "hits": 1
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/treatment/log",
+      "hits": 1
+    },
+    {
+      "host": "download-windows.grammarly.com",
+      "path": "/versions/1.2.281.1928/GrammarlyInstaller.exe",
+      "hits": 1
+    },
+    {
+      "host": "static-web.grammarly.com",
+      "path": "/shared/fonts/product/v1/matter-bold.woff2",
+      "hits": 1
+    },
+    {
+      "host": "static-web.grammarly.com",
+      "path": "/shared/fonts/product/v1/inter-medium.woff2",
+      "hits": 1
+    },
+    {
+      "host": "static-web.grammarly.com",
+      "path": "/shared/fonts/product/v1/inter-bold.woff2",
+      "hits": 1
+    },
+    {
+      "host": "gateway.grammarly.com",
+      "path": "/experimentation/properties/showDesktopIntegrationExtensionToggle",
+      "hits": 1
+    },
+    {
+      "host": "subscription.grammarly.com",
+      "path": "/api/v1/subscription",
+      "hits": 1
+    }
+  ]
+}

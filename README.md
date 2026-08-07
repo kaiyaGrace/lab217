@@ -1,102 +1,44 @@
-# Grammarly Traffic Analysis Toolkit
-
-Two complementary tools for inspecting Grammarly's network behavior through a transparent mitmproxy setup: **GLIMPSE**, a post-hoc sensitivity analyzer for saved flow logs, and **GLEAN**, a live endpoint/RPC behavior monitor.
-
----
+# Lab 217
 
 ## Contents
 
+- [Background](#background)
+- [Prerequisites](#prerequisites)
 - [Tool Overview](#tool-overview)
-- [Transparent Proxy Setup](#transparent-proxy-setup)
-- [GLIMPSE](#glimpse)
-- [GLEAN](#glean)
-- [Screenshots](#screenshots)
+- [Citations](#citations)
 
----
+## Background
+
+This summer, I have had the privilege of working with Prof. Kroll at the Naval Postgraduate School (NPS) through the Naval Research Labs Internship Program (NREIP). We researched the security risks associated with using Grammarly and how those risks affect the campus community.
+
+My project specifically focused on determining whether certain combinations of Grammarly settings were more prone to leaking sensitive data than others.
+
+Along the way, I realized that the specific tools I wanted to use did not exist.
+
+So, I created them.
+
+**View the poster:** [Canva](https://canva.link/j3dkh5pfszbgdjo)
+
+## Prerequisites
+
+- [mitmproxy](https://mitmproxy.org/)
+- SQL
+- Python
 
 ## Tool Overview
 
-| Tool | Acronym | Purpose |
-|------|---------|---------|
-| **GLIMPSE** | Grammarly Log Inspection for Metadata, Privacy & Sensitive-data Evaluation | Analyzes **saved** mitmweb flow logs offline to detect PII, PHI, PCI-DSS, and credential data transmitted to Grammarly's endpoints. |
-| **GLEAN** | Grammarly Live Endpoint Analysis & Navigation | Runs **live** (or against saved logs) to inventory Grammarly's JSON/RPC endpoints, track schema drift, and flag anomalies in real time. |
+### Glimpse
 
-Both tools consume traffic captured through a transparent proxy running on **Frodo**, routed from the target client (**Legolas**).
+Analyzes saved MITMWeb flows and provides a command-line summary of what sensitive data was captured and where it originated.
 
----
+Glimpse aggregates information into a database, which can be cleared to analyze individual session logs. The database can also be queried directly.
 
-## Transparent Proxy Setup
+### Glean
 
-**Prerequisites:** certificates configured and mitmproxy installed on Frodo.
+Analyzes JSON-RPC endpoints from MITMWeb in real time.
 
-On Frodo:
+Glean also aggregates information into a database for querying and analysis.
 
-```bash
-./runMitmWebRules
-./tspMitmWeb
-```
+## Citations
 
-This routes client traffic from Legolas through Frodo's mitmweb instance, which both GLIMPSE and GLEAN read from.
-
----
-
-## GLIMPSE
-
-`analyze_flows.py` — reads a saved mitmproxy flow log, runs a local detection pipeline over HTTP request/response payloads, and writes structured results to SQLite alongside a CLI sensitivity report.
-
-**Prerequisite:** a downloaded mitmweb flow log.
-
-> **Important:** running GLIMPSE aggregates data into the database across runs. Flush the database before each new run to keep results scoped to a single log:
->
-> ```bash
-> rm flow_analysis.db
-> ```
-
-**Run on Frodo:**
-
-```bash
-python3 ~/github/glimpse/analyze_flows_v9.py ~/mitmWebLogs/mitmWeb_p5
-```
-
-GLIMPSE outputs a report covering:
-- Destination hosts ranked by sensitive-data hit count (Critical/High/Medium/Low)
-- Total flows and words processed
-- Sensitive data classifications (Credentials, PII, PCI-DSS, PHI) with severity breakdown
-
----
-
-## GLEAN
-
-A mitmproxy/mitmweb addon and live dashboard that logs Grammarly's JSON-RPC endpoint behavior into SQLite, tracking endpoint inventory and schema-change anomalies as they occur.
-
-**Prerequisite:** mitmweb and certificates configured (see [Transparent Proxy Setup](#transparent-proxy-setup)).
-
-**Run on Frodo:**
-
-```bash
-./runMitmWebRules
-./tspMitmWeb
-```
-
-Then, from the `glean` directory, launch the live dashboard:
-
-```bash
-cd ~/glean
-python3 -m glean.cli attach --db data/glean.db --label control
-```
-
-GLEAN's live dashboard shows:
-- A running endpoint inventory (path, hit count, first/last seen)
-- Detected anomalies (new endpoints, new/disappeared fields, type changes) with review status
-
----
-
-## Screenshots
-
-**GLEAN — live endpoint inventory and anomaly detection:**
-
-![GLEAN live dashboard showing endpoint inventory and schema-change anomalies](screenshots/glean_live_dashboard.png)
-
-**GLIMPSE — PII/PHI sensitivity analysis report:**
-
-![GLIMPSE report showing sensitive data by destination host and classification](screenshots/glimpse_sensitivity_report.png)
+- All tools were created with the assistance of Claude and debugged with Claude, ChatGPT, and Gemini.

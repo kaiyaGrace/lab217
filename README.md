@@ -39,6 +39,8 @@ Analyzes JSON-RPC endpoints from MITMWeb in real time.
 
 Glean also aggregates information into a database for querying and analysis.
 
+*not the same as Gleam! (Gleam is a different tool that needs to be debugged, and probably renamed...)
+
 ## Citations
 
 - All tools were created with the assistance of Claude and debugged with Claude, ChatGPT, and Gemini.

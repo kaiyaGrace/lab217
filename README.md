@@ -15,7 +15,7 @@ My project specifically focused on determining whether certain combinations of G
 
 Along the way, I realized that the specific tools I wanted to use did not exist.
 
-So, I created them.
+So, I did my best to create them!
 
 **View the poster:** [Canva](https://canva.link/j3dkh5pfszbgdjo)
 

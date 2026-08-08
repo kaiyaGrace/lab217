@@ -1,3 +1,0 @@
-mitmproxy>=10
-rich>=13
-flask>=3

@@ -15,7 +15,7 @@ My project specifically focused on determining whether certain combinations of G
 
 Along the way, I realized that the specific tools I wanted to use did not exist.
 
-So, I created them.
+So, I did my best to create them!
 
 **View the poster:** [Canva](https://canva.link/j3dkh5pfszbgdjo)
 
@@ -38,6 +38,8 @@ Glimpse aggregates information into a database, which can be cleared to analyze 
 Analyzes JSON-RPC endpoints from MITMWeb in real time.
 
 Glean also aggregates information into a database for querying and analysis.
+
+*not the same as Gleam! (Gleam is a different tool that needs to be debugged, and probably renamed...)
 
 ## Citations
 

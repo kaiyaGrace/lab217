@@ -1,187 +1,427 @@
 #!/usr/bin/env python3
 
 """
-Grammarly MITMWeb / mitmproxy Saved-Flow Analyzer
+grammarly_api_behavior_analyzer.py
 
-Usage:
-    python analyze_grammarly_flows.py smallPractice_2
+Analyze a mitmweb/mitmproxy saved flow file for Grammarly API behavior.
 
-Optional:
-    python analyze_grammarly_flows.py smallPractice_2 --out smallPractice_2_analysis
+Outputs:
+    <input>_analysis/
+        report.md
+        endpoints.csv
+        request_fields.csv
+        response_fields.csv
+        endpoint_examples.csv
+        behavior_timeline.csv
 
-Requires:
-    pip install mitmproxy
+The analyzer:
+    - Identifies Grammarly traffic using hostname, :authority, SNI,
+      URLs, and request/response metadata.
+    - Handles HTTP/2 captures where request.host may be an IP address.
+    - Detects JSON bodies even when Content-Type is text/plain.
+    - Extracts endpoint paths and HTTP methods.
+    - Builds endpoint trees.
+    - Extracts JSON field paths and value types.
+    - Tracks field frequency.
+    - Tracks request/response sizes.
+    - Records timestamps.
+    - Redacts obvious sensitive values.
+    - Avoids dumping giant raw JSON bodies into the report.
 """
 
-from __future__ import annotations
-
-import argparse
-import csv
-import json
-import re
 import sys
+import os
+import re
+import json
+import csv
+import hashlib
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from pathlib import Path
-from urllib.parse import urlsplit
 
-try:
-    from mitmproxy.io import FlowReader
-except ImportError:
-    print(
-        "\nERROR: mitmproxy is not installed.\n"
-        "Install it with:\n\n"
-        "    python -m pip install mitmproxy\n"
-    )
-    sys.exit(1)
+from mitmproxy import io
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-GRAMMARLY_DOMAINS = (
+GRAMMARLY_HOST_PATTERNS = (
     "grammarly.com",
     "grammarly.io",
+    "grammarly.localhost",
+    "grammarly.ai",
 )
 
-TELEMETRY_HINTS = (
-    "femetrics",
-    "telemetry",
-    "metrics",
-)
+OUTPUT_SUFFIX = "_analysis"
 
-AUTH_HINTS = (
-    "/auth/",
-    "/oauth/",
-    "/login",
-    "/logout",
-    "/userinfo",
-    "/token",
-)
+MAX_EXAMPLE_LENGTH = 300
 
-CONFIG_HINTS = (
-    "/configuration/",
-    "/config/",
-    "/settings",
-    "/experimentation/",
-)
-
-STATIC_EXTENSIONS = {
-    ".js",
-    ".css",
-    ".map",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".svg",
-    ".ico",
-    ".woff",
-    ".woff2",
-    ".ttf",
-    ".otf",
-    ".html",
-}
-
-SENSITIVE_FIELD_PATTERN = re.compile(
-    r"""
-    (
-        token
-        |access[_-]?token
-        |refresh[_-]?token
-        |authorization
-        |cookie
-        |password
-        |passwd
-        |secret
-        |api[_-]?key
-        |client[_-]?secret
-        |session[_-]?id
-        |user[_-]?id
-        |email
-        |credential
-        |jwt
-        |bearer
-    )
-    """,
-    re.IGNORECASE | re.VERBOSE,
+# Fields whose VALUES should never be written to output.
+SENSITIVE_FIELD_PATTERNS = (
+    "token",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "cookie",
+    "password",
+    "passwd",
+    "secret",
+    "api_key",
+    "apikey",
+    "email",
+    "user_id",
+    "account_id",
+    "session_id",
+    "device_id",
+    "container_id",
+    "referral_container_id",
 )
 
 
 # ============================================================
-# BASIC HELPERS
+# HELPERS
 # ============================================================
 
-def is_grammarly_host(host: str) -> bool:
-    """Return True if the hostname belongs to Grammarly."""
-    host = (host or "").lower().rstrip(".")
+def safe_text(value):
+    """Convert bytes/objects to safe text."""
+    if value is None:
+        return ""
 
-    return any(
-        host == domain or host.endswith("." + domain)
-        for domain in GRAMMARLY_DOMAINS
-    )
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+
+    return str(value)
 
 
-def get_body(message) -> bytes:
-    """Safely obtain the raw body from a mitmproxy request/response."""
-    if message is None:
+def normalize_host(value):
+    """Normalize a hostname."""
+    if not value:
+        return ""
+
+    value = safe_text(value).strip().lower()
+
+    # Remove port.
+    if value.startswith("["):
+        end = value.find("]")
+        if end != -1:
+            value = value[1:end]
+    elif ":" in value:
+        # Only strip port if it looks like hostname:port.
+        parts = value.rsplit(":", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            value = parts[0]
+
+    return value.rstrip(".")
+
+
+def is_grammarly_host(host):
+    """Return True if hostname looks like Grammarly infrastructure."""
+    host = normalize_host(host)
+
+    if not host:
+        return False
+
+    for pattern in GRAMMARLY_HOST_PATTERNS:
+        if host == pattern or host.endswith("." + pattern):
+            return True
+
+    return False
+
+
+def get_header(headers, name):
+    """Case-insensitive header lookup."""
+    try:
+        for key, value in headers.items():
+            if str(key).lower() == name.lower():
+                return safe_text(value)
+    except Exception:
+        pass
+
+    return ""
+
+
+def get_all_header_values(headers, name):
+    values = []
+
+    try:
+        for key, value in headers.items():
+            if str(key).lower() == name.lower():
+                values.append(safe_text(value))
+    except Exception:
+        pass
+
+    return values
+
+
+def get_authority(flow):
+    """
+    HTTP/2 :authority is especially important.
+
+    In the user's capture:
+        host      = 54.209.50.10
+        authority = inkwell.femetrics.grammarly.io
+    """
+
+    request = getattr(flow, "request", None)
+
+    if request is None:
+        return ""
+
+    # First try normal authority attribute.
+    for attr in ("authority", "host_header"):
+        try:
+            value = getattr(request, attr, "")
+            if value:
+                return normalize_host(value)
+        except Exception:
+            pass
+
+    # Then headers.
+    try:
+        value = get_header(request.headers, ":authority")
+        if value:
+            return normalize_host(value)
+    except Exception:
+        pass
+
+    return ""
+
+
+def get_sni(flow):
+    """Extract TLS SNI when available."""
+    for connection_name in ("server_conn", "client_conn"):
+        conn = getattr(flow, connection_name, None)
+
+        if conn is None:
+            continue
+
+        for attr in ("sni", "address"):
+            try:
+                value = getattr(conn, attr, None)
+
+                if attr == "address":
+                    # address may be (host, port)
+                    if isinstance(value, tuple) and value:
+                        value = value[0]
+
+                if value:
+                    value = normalize_host(value)
+
+                    if is_grammarly_host(value):
+                        return value
+            except Exception:
+                pass
+
+    return ""
+
+
+def get_candidate_hosts(flow):
+    """Return every hostname-like value available in a flow."""
+    candidates = []
+
+    request = getattr(flow, "request", None)
+
+    if request is not None:
+
+        for attr in ("host", "authority", "host_header"):
+            try:
+                value = getattr(request, attr, "")
+                if value:
+                    candidates.append(normalize_host(value))
+            except Exception:
+                pass
+
+        try:
+            authority = get_header(request.headers, ":authority")
+            if authority:
+                candidates.append(normalize_host(authority))
+        except Exception:
+            pass
+
+        try:
+            url = getattr(request, "pretty_url", "")
+            if url:
+                match = re.match(r"^[a-zA-Z]+://([^/:]+)", url)
+                if match:
+                    candidates.append(normalize_host(match.group(1)))
+        except Exception:
+            pass
+
+    sni = get_sni(flow)
+
+    if sni:
+        candidates.append(sni)
+
+    return list(dict.fromkeys(x for x in candidates if x))
+
+
+def is_grammarly_flow(flow):
+    """
+    Robust Grammarly detection.
+
+    IMPORTANT:
+    Do NOT depend only on request.host.
+    HTTP/2 captures can have an IP there while :authority/SNI contains
+    the actual Grammarly hostname.
+    """
+
+    candidates = get_candidate_hosts(flow)
+
+    for host in candidates:
+        if is_grammarly_host(host):
+            return True
+
+    # Last-resort URL/path inspection.
+    request = getattr(flow, "request", None)
+
+    if request is not None:
+        try:
+            url = safe_text(getattr(request, "pretty_url", ""))
+            if "grammarly.com" in url.lower():
+                return True
+            if "grammarly.io" in url.lower():
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def get_best_host(flow):
+    """Choose the most useful Grammarly hostname."""
+    candidates = get_candidate_hosts(flow)
+
+    for host in candidates:
+        if is_grammarly_host(host):
+            return host
+
+    return candidates[0] if candidates else ""
+
+
+def get_path(flow):
+    request = getattr(flow, "request", None)
+
+    if request is None:
+        return ""
+
+    try:
+        path = getattr(request, "path", "")
+        if path:
+            return safe_text(path)
+    except Exception:
+        pass
+
+    try:
+        url = getattr(request, "pretty_url", "")
+        if url:
+            match = re.match(r"^[a-zA-Z]+://[^/]+(.*)$", url)
+            if match:
+                return match.group(1) or "/"
+    except Exception:
+        pass
+
+    return ""
+
+
+def get_method(flow):
+    request = getattr(flow, "request", None)
+
+    if request is None:
+        return ""
+
+    try:
+        return safe_text(getattr(request, "method", "")).upper()
+    except Exception:
+        return ""
+
+
+def get_body(flow, direction):
+    """Return request or response body as bytes."""
+    try:
+        if direction == "request":
+            obj = getattr(flow, "request", None)
+        else:
+            obj = getattr(flow, "response", None)
+
+        if obj is None:
+            return b""
+
+        content = getattr(obj, "content", None)
+
+        if content is None:
+            return b""
+
+        if isinstance(content, bytes):
+            return content
+
+        return safe_text(content).encode("utf-8", errors="replace")
+
+    except Exception:
         return b""
 
-    try:
-        if message.raw_content:
-            return bytes(message.raw_content)
-    except Exception:
-        pass
 
-    try:
-        if message.content:
-            return bytes(message.content)
-    except Exception:
-        pass
+def looks_like_json_text(text):
+    """Cheap JSON detection without relying on Content-Type."""
+    if not text:
+        return False
 
-    return b""
+    stripped = text.strip()
 
+    if not stripped:
+        return False
 
-def get_content_type(message) -> str:
-    """Safely obtain Content-Type."""
-    if message is None:
-        return ""
+    if stripped[0] in "{[" and stripped[-1:] in "}]":
+        return True
 
-    try:
-        return message.headers.get("content-type", "")
-    except Exception:
-        return ""
+    # Sometimes JSON has whitespace/BOM.
+    stripped = stripped.lstrip("\ufeff").strip()
+
+    return (
+        (stripped.startswith("{") and stripped.endswith("}"))
+        or
+        (stripped.startswith("[") and stripped.endswith("]"))
+    )
 
 
-def parse_json(body: bytes):
-    """Try to parse a body as JSON."""
+def parse_json_body(body):
+    """
+    Attempt JSON parsing regardless of Content-Type.
+
+    This is important because the sample Grammarly telemetry uses:
+        content-type: text/plain;charset=UTF-8
+
+    while containing JSON.
+    """
+
     if not body:
         return None
 
-    try:
-        text = body.decode("utf-8", errors="replace").strip()
-    except Exception:
-        return None
+    text = body.decode("utf-8", errors="replace")
 
-    if not text:
-        return None
-
+    # Try normal JSON.
     try:
         return json.loads(text)
     except Exception:
-        return None
+        pass
+
+    # Try stripping UTF-8 BOM.
+    try:
+        text2 = text.lstrip("\ufeff").strip()
+        return json.loads(text2)
+    except Exception:
+        pass
+
+    return None
 
 
-def value_type(value) -> str:
-    """Return a useful JSON type name."""
+def json_type(value):
     if value is None:
         return "null"
 
     if isinstance(value, bool):
         return "boolean"
 
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool):
         return "integer"
 
     if isinstance(value, float):
@@ -199,207 +439,486 @@ def value_type(value) -> str:
     return type(value).__name__
 
 
-def is_sensitive_field(field_name: str) -> bool:
-    """Detect field names that should never have their values exported."""
-    return bool(SENSITIVE_FIELD_PATTERN.search(field_name))
+def is_sensitive_field(path):
+    """Determine whether a JSON field path contains sensitive data."""
+    lower = path.lower()
+
+    for pattern in SENSITIVE_FIELD_PATTERNS:
+        if pattern in lower:
+            return True
+
+    return False
 
 
-def flatten_json(value, prefix="", depth=0, max_depth=8):
+def redact_value(path, value):
     """
-    Convert JSON into a compact schema.
+    Preserve useful schema information while hiding sensitive values.
+    """
+
+    if is_sensitive_field(path):
+        if value is None:
+            return None
+
+        return "<REDACTED>"
+
+    if isinstance(value, dict):
+        return {
+            key: redact_value(
+                f"{path}.{key}" if path else key,
+                val
+            )
+            for key, val in value.items()
+        }
+
+    if isinstance(value, list):
+        result = []
+
+        for item in value[:10]:
+            result.append(
+                redact_value(path + "[]", item)
+            )
+
+        if len(value) > 10:
+            result.append("<...>")
+
+        return result
+
+    if isinstance(value, str):
+        if len(value) > MAX_EXAMPLE_LENGTH:
+            return value[:MAX_EXAMPLE_LENGTH] + "...<TRUNCATED>"
+
+    return value
+
+
+def extract_json_fields(value, prefix=""):
+    """
+    Return:
+        field_path -> set(types)
 
     Example:
 
         {
-            "user": {
-                "id": "abc"
-            },
-            "text": "hello"
+            "client": "windows",
+            "device": {
+                "system_name": "Windows"
+            }
         }
 
     becomes:
 
-        user        object
-        user.id     string
-        text        string
-
-    IMPORTANT:
-    Values are never returned.
+        client -> string
+        device -> object
+        device.system_name -> string
     """
 
-    results = []
-
-    if depth > max_depth:
-        results.append(
-            (
-                prefix or "$",
-                value_type(value),
-            )
-        )
-        return results
+    fields = defaultdict(set)
 
     if isinstance(value, dict):
-
-        if prefix:
-            results.append(
-                (
-                    prefix,
-                    "object",
-                )
-            )
 
         for key, child in value.items():
 
             key = str(key)
 
-            path = (
-                f"{prefix}.{key}"
-                if prefix
-                else key
-            )
+            path = f"{prefix}.{key}" if prefix else key
 
-            results.extend(
-                flatten_json(
-                    child,
-                    path,
-                    depth + 1,
-                    max_depth,
-                )
-            )
+            fields[path].add(json_type(child))
+
+            child_fields = extract_json_fields(child, path)
+
+            for child_path, child_types in child_fields.items():
+                fields[child_path].update(child_types)
 
     elif isinstance(value, list):
 
-        if prefix:
-            results.append(
-                (
-                    prefix,
-                    "array",
+        array_path = prefix + "[]" if prefix else "[]"
+
+        fields[array_path].add("array")
+
+        for item in value[:20]:
+
+            if isinstance(item, (dict, list)):
+                child_fields = extract_json_fields(
+                    item,
+                    array_path
                 )
-            )
 
-        # Don't analyze hundreds/thousands of identical array items.
-        for child in value[:5]:
+                for child_path, child_types in child_fields.items():
+                    fields[child_path].update(child_types)
 
-            results.extend(
-                flatten_json(
-                    child,
-                    f"{prefix}[]",
-                    depth + 1,
-                    max_depth,
-                )
-            )
+            else:
+                fields[array_path].add(json_type(item))
 
-    else:
-
-        results.append(
-            (
-                prefix or "$",
-                value_type(value),
-            )
-        )
-
-    return results
+    return fields
 
 
-def timestamp_to_iso(timestamp):
-    """Convert mitmproxy epoch timestamps to readable UTC."""
-    if timestamp is None:
+def timestamp_to_string(timestamp):
+    if not timestamp:
         return ""
 
     try:
-        return datetime.fromtimestamp(
+        dt = datetime.fromtimestamp(
             float(timestamp),
-            tz=timezone.utc,
-        ).isoformat()
+            tz=timezone.utc
+        )
+
+        return dt.isoformat()
     except Exception:
-        return str(timestamp)
+        return safe_text(timestamp)
 
 
-# ============================================================
-# ENDPOINT CLASSIFICATION
-# ============================================================
+def get_timestamp(flow):
+    request = getattr(flow, "request", None)
 
-def classify_endpoint(
-    host: str,
-    path: str,
-    method: str,
-    content_type: str,
-) -> str:
+    if request is not None:
+        for attr in ("timestamp_start", "timestamp_created"):
+            try:
+                value = getattr(request, attr, None)
 
-    host_lower = host.lower()
-    path_lower = path.lower()
-    content_lower = content_type.lower()
+                if value:
+                    return float(value)
+            except Exception:
+                pass
 
-    # Telemetry / metrics
-    if any(
-        hint in host_lower
-        for hint in TELEMETRY_HINTS
-    ):
-        return "telemetry"
+    return None
 
-    # Authentication
-    if any(
-        hint in path_lower
-        for hint in AUTH_HINTS
-    ):
-        return "authentication"
 
-    # Configuration / settings
-    if any(
-        hint in path_lower
-        for hint in CONFIG_HINTS
-    ):
-        return "configuration"
-
-    # CORS
-    if method.upper() == "OPTIONS":
-        return "cors_preflight"
-
-    # Static files
+def flow_id(flow):
+    """Create a stable short ID for the flow."""
     try:
-        extension = Path(
-            urlsplit(
-                "https://" + host + path
-            ).path
-        ).suffix.lower()
+        value = getattr(flow, "id", None)
+
+        if value:
+            return safe_text(value)
     except Exception:
-        extension = ""
+        pass
 
-    if extension in STATIC_EXTENSIONS:
-        return "static"
+    raw = (
+        get_best_host(flow)
+        + "|"
+        + get_method(flow)
+        + "|"
+        + get_path(flow)
+        + "|"
+        + str(get_timestamp(flow))
+    )
 
-    # JSON / REST-like API
-    if (
-        "json" in content_lower
-        or path_lower.startswith("/api/")
-        or "/v1/" in path_lower
-        or "/v2/" in path_lower
-    ):
-        return "api_candidate"
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
-    return "other_grammarly"
+
+def short_example(value):
+    """Compact redacted JSON example."""
+    try:
+        value = redact_value("", value)
+
+        text = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":")
+        )
+
+        if len(text) > MAX_EXAMPLE_LENGTH:
+            text = text[:MAX_EXAMPLE_LENGTH] + "...<TRUNCATED>"
+
+        return text
+
+    except Exception:
+        return "<UNSERIALIZABLE>"
+
+
+# ============================================================
+# DATA STRUCTURES
+# ============================================================
+
+endpoint_stats = defaultdict(
+    lambda: {
+        "count": 0,
+        "methods": Counter(),
+        "hosts": Counter(),
+        "request_json": 0,
+        "response_json": 0,
+        "request_bytes": 0,
+        "response_bytes": 0,
+        "first_timestamp": None,
+        "last_timestamp": None,
+    }
+)
+
+request_fields = defaultdict(
+    lambda: {
+        "count": 0,
+        "types": Counter(),
+        "examples": [],
+        "endpoints": Counter(),
+    }
+)
+
+response_fields = defaultdict(
+    lambda: {
+        "count": 0,
+        "types": Counter(),
+        "examples": [],
+        "endpoints": Counter(),
+    }
+)
+
+endpoint_examples = []
+
+timeline = []
+
+host_counts = Counter()
+path_counts = Counter()
+method_counts = Counter()
+
+total_flows = 0
+grammarly_flows = 0
+json_requests = 0
+json_responses = 0
+
+
+# ============================================================
+# PROCESS ONE FLOW
+# ============================================================
+
+def process_flow(flow):
+
+    global total_flows
+    global grammarly_flows
+    global json_requests
+    global json_responses
+
+    total_flows += 1
+
+    if not is_grammarly_flow(flow):
+        return
+
+    grammarly_flows += 1
+
+    host = get_best_host(flow)
+    method = get_method(flow)
+    path = get_path(flow)
+    timestamp = get_timestamp(flow)
+
+    host_counts[host] += 1
+    path_counts[path] += 1
+    method_counts[method] += 1
+
+    endpoint_key = f"{method} {path}"
+
+    stats = endpoint_stats[endpoint_key]
+
+    stats["count"] += 1
+    stats["methods"][method] += 1
+    stats["hosts"][host] += 1
+
+    req_body = get_body(flow, "request")
+    resp_body = get_body(flow, "response")
+
+    stats["request_bytes"] += len(req_body)
+    stats["response_bytes"] += len(resp_body)
+
+    if timestamp:
+
+        if (
+            stats["first_timestamp"] is None
+            or timestamp < stats["first_timestamp"]
+        ):
+            stats["first_timestamp"] = timestamp
+
+        if (
+            stats["last_timestamp"] is None
+            or timestamp > stats["last_timestamp"]
+        ):
+            stats["last_timestamp"] = timestamp
+
+    # --------------------------------------------------------
+    # REQUEST JSON
+    # --------------------------------------------------------
+
+    req_json = parse_json_body(req_body)
+
+    if req_json is not None:
+
+        json_requests += 1
+        stats["request_json"] += 1
+
+        fields = extract_json_fields(req_json)
+
+        for field_path, types in fields.items():
+
+            key = (endpoint_key, field_path)
+
+            entry = request_fields[key]
+
+            entry["count"] += 1
+            entry["endpoints"][endpoint_key] += 1
+
+            for t in types:
+                entry["types"][t] += 1
+
+            if len(entry["examples"]) < 3:
+
+                # Try to find actual field value.
+                # We use a helper rather than dumping the whole object.
+                value = find_json_path(req_json, field_path)
+
+                example = short_example(value)
+
+                if example not in entry["examples"]:
+                    entry["examples"].append(example)
+
+    # --------------------------------------------------------
+    # RESPONSE JSON
+    # --------------------------------------------------------
+
+    resp_json = parse_json_body(resp_body)
+
+    if resp_json is not None:
+
+        json_responses += 1
+        stats["response_json"] += 1
+
+        fields = extract_json_fields(resp_json)
+
+        for field_path, types in fields.items():
+
+            key = (endpoint_key, field_path)
+
+            entry = response_fields[key]
+
+            entry["count"] += 1
+            entry["endpoints"][endpoint_key] += 1
+
+            for t in types:
+                entry["types"][t] += 1
+
+            if len(entry["examples"]) < 3:
+
+                value = find_json_path(resp_json, field_path)
+
+                example = short_example(value)
+
+                if example not in entry["examples"]:
+                    entry["examples"].append(example)
+
+    # --------------------------------------------------------
+    # ENDPOINT EXAMPLE
+    # --------------------------------------------------------
+
+    if len(endpoint_examples) < 10000:
+
+        endpoint_examples.append({
+            "flow_id": flow_id(flow),
+            "timestamp": timestamp_to_string(timestamp),
+            "host": host,
+            "method": method,
+            "path": path,
+            "request_bytes": len(req_body),
+            "response_bytes": len(resp_body),
+            "request_json": "yes" if req_json is not None else "no",
+            "response_json": "yes" if resp_json is not None else "no",
+            "request_example": (
+                short_example(req_json)
+                if req_json is not None
+                else ""
+            ),
+            "response_example": (
+                short_example(resp_json)
+                if resp_json is not None
+                else ""
+            ),
+        })
+
+    # --------------------------------------------------------
+    # TIMELINE
+    # --------------------------------------------------------
+
+    timeline.append({
+        "timestamp": timestamp_to_string(timestamp),
+        "timestamp_epoch": timestamp if timestamp else "",
+        "host": host,
+        "method": method,
+        "path": path,
+        "request_bytes": len(req_body),
+        "response_bytes": len(resp_body),
+        "request_json": "yes" if req_json is not None else "no",
+        "response_json": "yes" if resp_json is not None else "no",
+    })
+
+
+# ============================================================
+# JSON PATH LOOKUP
+# ============================================================
+
+def find_json_path(data, path):
+    """
+    Find a value using a dotted field path.
+
+    Handles paths such as:
+        client
+        device.system_name
+        labels[]
+    """
+
+    if not path:
+        return data
+
+    parts = path.split(".")
+
+    current = data
+
+    for part in parts:
+
+        if part.endswith("[]"):
+            part = part[:-2]
+
+            if isinstance(current, dict):
+                current = current.get(part)
+
+            if isinstance(current, list):
+                if current:
+                    current = current[0]
+                else:
+                    return None
+
+            continue
+
+        if isinstance(current, dict):
+
+            if part not in current:
+                return None
+
+            current = current[part]
+
+        elif isinstance(current, list):
+
+            if not current:
+                return None
+
+            current = current[0]
+
+        else:
+            return None
+
+    return current
 
 
 # ============================================================
 # CSV WRITER
 # ============================================================
 
-def write_csv(
-    filename: Path,
-    fieldnames,
-    rows,
-):
+def write_csv(path, fieldnames, rows):
 
-    with filename.open(
+    with open(
+        path,
         "w",
         newline="",
-        encoding="utf-8",
-    ) as file:
+        encoding="utf-8"
+    ) as f:
 
         writer = csv.DictWriter(
-            file,
+            f,
             fieldnames=fieldnames,
-            extrasaction="ignore",
+            extrasaction="ignore"
         )
 
         writer.writeheader()
@@ -409,1067 +928,560 @@ def write_csv(
 
 
 # ============================================================
-# MAIN ANALYSIS
+# WRITE RESULTS
 # ============================================================
 
-def analyze_flow_file(
-    input_file: Path,
-    output_directory: Path,
-):
+def write_results(output_dir):
 
-    output_directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    os.makedirs(output_dir, exist_ok=True)
 
     # --------------------------------------------------------
-    # Statistics
+    # ENDPOINTS CSV
     # --------------------------------------------------------
-
-    endpoint_stats = defaultdict(
-        lambda: {
-            "hosts": Counter(),
-            "methods": Counter(),
-            "categories": Counter(),
-            "statuses": Counter(),
-
-            "requests": 0,
-            "responses": 0,
-
-            "json_requests": 0,
-            "json_responses": 0,
-
-            "request_fields": Counter(),
-            "response_fields": Counter(),
-
-            "first_timestamp": None,
-            "last_timestamp": None,
-        }
-    )
-
-    request_field_types = defaultdict(
-        lambda: defaultdict(Counter)
-    )
-
-    response_field_types = defaultdict(
-        lambda: defaultdict(Counter)
-    )
-
-    request_field_rows = []
-    response_field_rows = []
-    timeline_rows = []
-
-    total_flows = 0
-    grammarly_flows = 0
-    json_request_count = 0
-    json_response_count = 0
-
-    # --------------------------------------------------------
-    # Read mitmproxy flow file
-    # --------------------------------------------------------
-
-    print()
-    print("Reading mitmweb flow file...")
-    print()
-
-    with input_file.open("rb") as file:
-
-        reader = FlowReader(file)
-
-        for flow in reader.stream():
-
-            total_flows += 1
-
-            if total_flows % 5000 == 0:
-
-                print(
-                    f"  Processed {total_flows:,} flows..."
-                )
-
-            request = getattr(
-                flow,
-                "request",
-                None,
-            )
-
-            if request is None:
-                continue
-
-            host = getattr(
-                request,
-                "host",
-                "",
-            ) or ""
-
-            # ------------------------------------------------
-            # Grammarly filter
-            # ------------------------------------------------
-
-            if not is_grammarly_host(host):
-                continue
-
-            grammarly_flows += 1
-
-            method = (
-                getattr(
-                    request,
-                    "method",
-                    "",
-                )
-                or ""
-            ).upper()
-
-            path = (
-                getattr(
-                    request,
-                    "path",
-                    "",
-                )
-                or "/"
-            )
-
-            endpoint = (
-                f"{method} {path}"
-            )
-
-            request_content_type = get_content_type(
-                request
-            )
-
-            response = getattr(
-                flow,
-                "response",
-                None,
-            )
-
-            response_content_type = get_content_type(
-                response
-            )
-
-            category = classify_endpoint(
-                host,
-                path,
-                method,
-                request_content_type
-                or response_content_type,
-            )
-
-            stats = endpoint_stats[
-                endpoint
-            ]
-
-            # ------------------------------------------------
-            # Basic endpoint statistics
-            # ------------------------------------------------
-
-            stats["requests"] += 1
-
-            stats["hosts"][host] += 1
-
-            stats["methods"][method] += 1
-
-            stats["categories"][category] += 1
-
-            timestamp = getattr(
-                request,
-                "timestamp_start",
-                None,
-            )
-
-            if timestamp is not None:
-
-                timestamp = float(timestamp)
-
-                if (
-                    stats["first_timestamp"]
-                    is None
-                    or timestamp
-                    < stats["first_timestamp"]
-                ):
-                    stats["first_timestamp"] = timestamp
-
-                if (
-                    stats["last_timestamp"]
-                    is None
-                    or timestamp
-                    > stats["last_timestamp"]
-                ):
-                    stats["last_timestamp"] = timestamp
-
-            # ------------------------------------------------
-            # Response
-            # ------------------------------------------------
-
-            status_code = ""
-
-            if response is not None:
-
-                stats["responses"] += 1
-
-                status_code = str(
-                    getattr(
-                        response,
-                        "status_code",
-                        "",
-                    )
-                )
-
-                if status_code:
-                    stats["statuses"][
-                        status_code
-                    ] += 1
-
-            # ------------------------------------------------
-            # Request JSON
-            # ------------------------------------------------
-
-            request_json = parse_json(
-                get_body(request)
-            )
-
-            request_fields = []
-
-            if request_json is not None:
-
-                json_request_count += 1
-
-                stats["json_requests"] += 1
-
-                request_fields = flatten_json(
-                    request_json
-                )
-
-                for field_path, field_type in request_fields:
-
-                    field_name = (
-                        field_path
-                        .split(".")[-1]
-                        .replace("[]", "")
-                    )
-
-                    # Never output the value.
-                    if is_sensitive_field(
-                        field_name
-                    ):
-                        field_type += " [REDACTED]"
-
-                    stats["request_fields"][
-                        field_path
-                    ] += 1
-
-                    request_field_types[
-                        endpoint
-                    ][
-                        field_path
-                    ][
-                        field_type
-                    ] += 1
-
-                    request_field_rows.append(
-                        {
-                            "endpoint": endpoint,
-                            "host": host,
-                            "field_path": field_path,
-                            "type": field_type,
-                            "timestamp_utc":
-                                timestamp_to_iso(
-                                    timestamp
-                                ),
-                        }
-                    )
-
-            # ------------------------------------------------
-            # Response JSON
-            # ------------------------------------------------
-
-            response_json = None
-
-            if response is not None:
-
-                response_json = parse_json(
-                    get_body(response)
-                )
-
-            response_fields = []
-
-            if response_json is not None:
-
-                json_response_count += 1
-
-                stats["json_responses"] += 1
-
-                response_fields = flatten_json(
-                    response_json
-                )
-
-                for field_path, field_type in response_fields:
-
-                    field_name = (
-                        field_path
-                        .split(".")[-1]
-                        .replace("[]", "")
-                    )
-
-                    if is_sensitive_field(
-                        field_name
-                    ):
-                        field_type += " [REDACTED]"
-
-                    stats["response_fields"][
-                        field_path
-                    ] += 1
-
-                    response_field_types[
-                        endpoint
-                    ][
-                        field_path
-                    ][
-                        field_type
-                    ] += 1
-
-                    response_field_rows.append(
-                        {
-                            "endpoint": endpoint,
-                            "host": host,
-                            "field_path": field_path,
-                            "type": field_type,
-                            "timestamp_utc":
-                                timestamp_to_iso(
-                                    timestamp
-                                ),
-                        }
-                    )
-
-            # ------------------------------------------------
-            # Timeline
-            # ------------------------------------------------
-
-            timeline_rows.append(
-                {
-                    "timestamp_utc":
-                        timestamp_to_iso(
-                            timestamp
-                        ),
-
-                    "method": method,
-
-                    "host": host,
-
-                    "path": path,
-
-                    "endpoint": endpoint,
-
-                    "category": category,
-
-                    "request_json":
-                        "yes"
-                        if request_json is not None
-                        else "no",
-
-                    "request_field_count":
-                        len(request_fields),
-
-                    "response_status":
-                        status_code,
-
-                    "response_json":
-                        "yes"
-                        if response_json is not None
-                        else "no",
-
-                    "response_field_count":
-                        len(response_fields),
-                }
-            )
-
-    # ========================================================
-    # BUILD ENDPOINT SUMMARY
-    # ========================================================
 
     endpoint_rows = []
 
     for endpoint, stats in sorted(
-        endpoint_stats.items()
+        endpoint_stats.items(),
+        key=lambda x: (-x[1]["count"], x[0])
     ):
 
-        category = ""
-
-        if stats["categories"]:
-
-            category = (
-                stats["categories"]
-                .most_common(1)[0][0]
-            )
-
-        endpoint_rows.append(
-            {
-                "endpoint": endpoint,
-
-                "hosts":
-                    "; ".join(
-                        host
-                        for host, _ in
-                        stats["hosts"]
-                        .most_common(5)
-                    ),
-
-                "category":
-                    category,
-
-                "requests":
-                    stats["requests"],
-
-                "json_requests":
-                    stats["json_requests"],
-
-                "responses":
-                    stats["responses"],
-
-                "json_responses":
-                    stats["json_responses"],
-
-                "methods":
-                    "; ".join(
-                        f"{method}={count}"
-                        for method, count
-                        in stats["methods"]
-                        .most_common()
-                    ),
-
-                "status_codes":
-                    "; ".join(
-                        f"{status}={count}"
-                        for status, count
-                        in stats["statuses"]
-                        .most_common()
-                    ),
-
-                "first_seen_utc":
-                    timestamp_to_iso(
-                        stats["first_timestamp"]
-                    ),
-
-                "last_seen_utc":
-                    timestamp_to_iso(
-                        stats["last_timestamp"]
-                    ),
-
-                "unique_request_fields":
-                    len(
-                        stats["request_fields"]
-                    ),
-
-                "unique_response_fields":
-                    len(
-                        stats["response_fields"]
-                    ),
-            }
-        )
-
-    # ========================================================
-    # BUILD FIELD SUMMARY
-    # ========================================================
-
-    field_summary_rows = []
-
-    all_endpoints = (
-        set(request_field_types)
-        |
-        set(response_field_types)
-    )
-
-    for endpoint in sorted(
-        all_endpoints
-    ):
-
-        request_fields = (
-            request_field_types
-            .get(endpoint, {})
-        )
-
-        response_fields = (
-            response_field_types
-            .get(endpoint, {})
-        )
-
-        all_fields = (
-            set(request_fields)
-            |
-            set(response_fields)
-        )
-
-        for field_path in sorted(
-            all_fields
-        ):
-
-            request_types = (
-                request_fields
-                .get(field_path, {})
-            )
-
-            response_types = (
-                response_fields
-                .get(field_path, {})
-            )
-
-            request_count = sum(
-                request_types.values()
-            )
-
-            response_count = sum(
-                response_types.values()
-            )
-
-            field_summary_rows.append(
-                {
-                    "endpoint":
-                        endpoint,
-
-                    "field_path":
-                        field_path,
-
-                    "request_occurrences":
-                        request_count,
-
-                    "request_types":
-                        "; ".join(
-                            f"{field_type}={count}"
-                            for field_type, count
-                            in request_types
-                            .most_common()
-                        ),
-
-                    "response_occurrences":
-                        response_count,
-
-                    "response_types":
-                        "; ".join(
-                            f"{field_type}={count}"
-                            for field_type, count
-                            in response_types
-                            .most_common()
-                        ),
-                }
-            )
-
-    # ========================================================
-    # SORT TIMELINE
-    # ========================================================
-
-    timeline_rows.sort(
-        key=lambda row:
-            row["timestamp_utc"]
-    )
-
-    # ========================================================
-    # WRITE CSV FILES
-    # ========================================================
-
-    print()
-    print("Writing results...")
+        endpoint_rows.append({
+            "endpoint": endpoint,
+            "count": stats["count"],
+            "methods": "; ".join(
+                f"{k}={v}"
+                for k, v in stats["methods"].items()
+            ),
+            "hosts": "; ".join(
+                f"{k}={v}"
+                for k, v in stats["hosts"].items()
+            ),
+            "json_requests": stats["request_json"],
+            "json_responses": stats["response_json"],
+            "request_bytes": stats["request_bytes"],
+            "response_bytes": stats["response_bytes"],
+            "first_seen": timestamp_to_string(
+                stats["first_timestamp"]
+            ),
+            "last_seen": timestamp_to_string(
+                stats["last_timestamp"]
+            ),
+        })
 
     write_csv(
-        output_directory
-        / "endpoint_summary.csv",
-
+        os.path.join(output_dir, "endpoints.csv"),
         [
             "endpoint",
-            "hosts",
-            "category",
-            "requests",
-            "json_requests",
-            "responses",
-            "json_responses",
+            "count",
             "methods",
-            "status_codes",
-            "first_seen_utc",
-            "last_seen_utc",
-            "unique_request_fields",
-            "unique_response_fields",
+            "hosts",
+            "json_requests",
+            "json_responses",
+            "request_bytes",
+            "response_bytes",
+            "first_seen",
+            "last_seen",
         ],
-
-        endpoint_rows,
+        endpoint_rows
     )
 
-    write_csv(
-        output_directory
-        / "request_fields.csv",
+    # --------------------------------------------------------
+    # REQUEST FIELDS CSV
+    # --------------------------------------------------------
 
+    request_rows = []
+
+    for (endpoint, field), entry in sorted(
+        request_fields.items()
+    ):
+
+        request_rows.append({
+            "endpoint": endpoint,
+            "field": field,
+            "count": entry["count"],
+            "types": "; ".join(
+                f"{k}={v}"
+                for k, v in entry["types"].items()
+            ),
+            "examples": " | ".join(entry["examples"]),
+        })
+
+    write_csv(
+        os.path.join(output_dir, "request_fields.csv"),
         [
             "endpoint",
+            "field",
+            "count",
+            "types",
+            "examples",
+        ],
+        request_rows
+    )
+
+    # --------------------------------------------------------
+    # RESPONSE FIELDS CSV
+    # --------------------------------------------------------
+
+    response_rows = []
+
+    for (endpoint, field), entry in sorted(
+        response_fields.items()
+    ):
+
+        response_rows.append({
+            "endpoint": endpoint,
+            "field": field,
+            "count": entry["count"],
+            "types": "; ".join(
+                f"{k}={v}"
+                for k, v in entry["types"].items()
+            ),
+            "examples": " | ".join(entry["examples"]),
+        })
+
+    write_csv(
+        os.path.join(output_dir, "response_fields.csv"),
+        [
+            "endpoint",
+            "field",
+            "count",
+            "types",
+            "examples",
+        ],
+        response_rows
+    )
+
+    # --------------------------------------------------------
+    # EXAMPLES CSV
+    # --------------------------------------------------------
+
+    write_csv(
+        os.path.join(output_dir, "endpoint_examples.csv"),
+        [
+            "flow_id",
+            "timestamp",
             "host",
-            "field_path",
-            "type",
-            "timestamp_utc",
-        ],
-
-        request_field_rows,
-    )
-
-    write_csv(
-        output_directory
-        / "response_fields.csv",
-
-        [
-            "endpoint",
-            "host",
-            "field_path",
-            "type",
-            "timestamp_utc",
-        ],
-
-        response_field_rows,
-    )
-
-    write_csv(
-        output_directory
-        / "endpoint_field_summary.csv",
-
-        [
-            "endpoint",
-            "field_path",
-            "request_occurrences",
-            "request_types",
-            "response_occurrences",
-            "response_types",
-        ],
-
-        field_summary_rows,
-    )
-
-    write_csv(
-        output_directory
-        / "timeline.csv",
-
-        [
-            "timestamp_utc",
             "method",
-            "host",
             "path",
-            "endpoint",
-            "category",
+            "request_bytes",
+            "response_bytes",
             "request_json",
-            "request_field_count",
-            "response_status",
             "response_json",
-            "response_field_count",
+            "request_example",
+            "response_example",
         ],
-
-        timeline_rows,
+        endpoint_examples
     )
-
-    # ========================================================
-    # BUILD MARKDOWN REPORT
-    # ========================================================
-
-    report = []
-
-    report.append(
-        "# Grammarly MITMWeb API Analysis"
-    )
-
-    report.append("")
-
-    report.append(
-        f"**Input:** `{input_file.name}`"
-    )
-
-    report.append("")
-
-    report.append(
-        f"- Total flows: **{total_flows:,}**"
-    )
-
-    report.append(
-        f"- Grammarly flows: **{grammarly_flows:,}**"
-    )
-
-    report.append(
-        f"- JSON request bodies: **{json_request_count:,}**"
-    )
-
-    report.append(
-        f"- JSON response bodies: **{json_response_count:,}**"
-    )
-
-    report.append(
-        f"- Unique endpoints: **{len(endpoint_rows):,}**"
-    )
-
-    report.append("")
 
     # --------------------------------------------------------
-    # Endpoint table
+    # TIMELINE CSV
     # --------------------------------------------------------
 
-    report.append(
-        "## Endpoint Summary"
+    timeline.sort(
+        key=lambda x: (
+            x["timestamp_epoch"]
+            if x["timestamp_epoch"] != ""
+            else 0
+        )
     )
 
-    report.append("")
-
-    report.append(
-        "| Method | Path | Category | Requests | JSON Req | JSON Resp | Req Fields | Resp Fields |"
+    write_csv(
+        os.path.join(output_dir, "behavior_timeline.csv"),
+        [
+            "timestamp",
+            "timestamp_epoch",
+            "host",
+            "method",
+            "path",
+            "request_bytes",
+            "response_bytes",
+            "request_json",
+            "response_json",
+        ],
+        timeline
     )
 
-    report.append(
-        "|---|---|---|---:|---:|---:|---:|---:|"
+    # --------------------------------------------------------
+    # REPORT
+    # --------------------------------------------------------
+
+    report_path = os.path.join(
+        output_dir,
+        "report.md"
     )
 
-    for row in endpoint_rows:
+    with open(
+        report_path,
+        "w",
+        encoding="utf-8"
+    ) as f:
 
-        try:
-            method, path = (
-                row["endpoint"]
-                .split(" ", 1)
+        f.write("# Grammarly API Behavior Analysis\n\n")
+
+        f.write("## Summary\n\n")
+
+        f.write(f"- Total flows: **{total_flows:,}**\n")
+        f.write(f"- Grammarly flows: **{grammarly_flows:,}**\n")
+        f.write(f"- JSON requests: **{json_requests:,}**\n")
+        f.write(f"- JSON responses: **{json_responses:,}**\n")
+        f.write(
+            f"- Unique endpoints: **{len(endpoint_stats):,}**\n"
+        )
+        f.write(
+            f"- Unique request fields: "
+            f"**{len(request_fields):,}**\n"
+        )
+        f.write(
+            f"- Unique response fields: "
+            f"**{len(response_fields):,}**\n\n"
+        )
+
+        # ----------------------------------------------------
+        # HOSTS
+        # ----------------------------------------------------
+
+        f.write("## Grammarly Hosts\n\n")
+
+        f.write("| Host | Flows |\n")
+        f.write("|---|---:|\n")
+
+        for host, count in host_counts.most_common():
+
+            f.write(
+                f"| `{host}` | {count:,} |\n"
             )
-        except ValueError:
-            method = ""
-            path = row["endpoint"]
 
-        report.append(
-            f"| `{method}` "
-            f"| `{path}` "
-            f"| {row['category']} "
-            f"| {row['requests']} "
-            f"| {row['json_requests']} "
-            f"| {row['json_responses']} "
-            f"| {row['unique_request_fields']} "
-            f"| {row['unique_response_fields']} |"
+        f.write("\n")
+
+        # ----------------------------------------------------
+        # ENDPOINT TREE
+        # ----------------------------------------------------
+
+        f.write("## Endpoint Tree\n\n")
+
+        tree = {}
+
+        for endpoint in endpoint_stats:
+
+            try:
+                method, path = endpoint.split(" ", 1)
+            except ValueError:
+                method = ""
+                path = endpoint
+
+            if not path:
+                path = "/"
+
+            parts = [
+                x for x in path.split("/")
+                if x
+            ]
+
+            current = tree
+
+            for part in parts:
+                current = current.setdefault(part, {})
+
+        def write_tree(node, prefix="", indent=0):
+
+            for name in sorted(node):
+
+                child = node[name]
+
+                f.write(
+                    "  " * indent
+                    + "- "
+                    + name
+                    + "\n"
+                )
+
+                write_tree(
+                    child,
+                    prefix + "/" + name,
+                    indent + 1
+                )
+
+        write_tree(tree)
+
+        f.write("\n")
+
+        # ----------------------------------------------------
+        # TOP ENDPOINTS
+        # ----------------------------------------------------
+
+        f.write("## Endpoints\n\n")
+
+        f.write(
+            "| Endpoint | Requests | JSON req | JSON resp | Host(s) |\n"
         )
 
-    report.append("")
-
-    # --------------------------------------------------------
-    # Request schemas
-    # --------------------------------------------------------
-
-    report.append(
-        "## Request JSON Schemas"
-    )
-
-    report.append("")
-
-    for endpoint in sorted(
-        request_field_types
-    ):
-
-        report.append(
-            f"### `{endpoint}`"
+        f.write(
+            "|---|---:|---:|---:|---|\n"
         )
 
-        report.append("")
-
-        report.append(
-            "| Field | Occurrences | Type(s) |"
-        )
-
-        report.append(
-            "|---|---:|---|"
-        )
-
-        for field_path, types in sorted(
-            request_field_types[
-                endpoint
-            ].items()
+        for endpoint, stats in sorted(
+            endpoint_stats.items(),
+            key=lambda x: (-x[1]["count"], x[0])
         ):
 
-            count = sum(
-                types.values()
+            hosts = ", ".join(
+                stats["hosts"].keys()
             )
 
-            type_text = ", ".join(
-                f"{field_type} ({count})"
-                for field_type, count
-                in types.most_common()
+            f.write(
+                f"| `{endpoint}` | "
+                f"{stats['count']:,} | "
+                f"{stats['request_json']:,} | "
+                f"{stats['response_json']:,} | "
+                f"{hosts} |\n"
             )
 
-            report.append(
-                f"| `{field_path}` "
-                f"| {count} "
-                f"| {type_text} |"
+        f.write("\n")
+
+        # ----------------------------------------------------
+        # REQUEST SCHEMAS
+        # ----------------------------------------------------
+
+        f.write("## Request JSON Fields by Endpoint\n\n")
+
+        fields_by_endpoint = defaultdict(list)
+
+        for (endpoint, field), entry in request_fields.items():
+
+            fields_by_endpoint[endpoint].append(
+                (field, entry)
             )
 
-        report.append("")
+        for endpoint in sorted(fields_by_endpoint):
 
-    # --------------------------------------------------------
-    # Response schemas
-    # --------------------------------------------------------
+            f.write(f"### `{endpoint}`\n\n")
 
-    report.append(
-        "## Response JSON Schemas"
-    )
+            f.write("| Field | Count | Type(s) | Example |\n")
+            f.write("|---|---:|---|---|\n")
 
-    report.append("")
+            for field, entry in sorted(
+                fields_by_endpoint[endpoint],
+                key=lambda x: (-x[1]["count"], x[0])
+            ):
 
-    for endpoint in sorted(
-        response_field_types
-    ):
+                types = ", ".join(
+                    entry["types"].keys()
+                )
 
-        report.append(
-            f"### `{endpoint}`"
+                example = (
+                    entry["examples"][0]
+                    if entry["examples"]
+                    else ""
+                )
+
+                f.write(
+                    f"| `{field}` | "
+                    f"{entry['count']:,} | "
+                    f"{types} | "
+                    f"`{example}` |\n"
+                )
+
+            f.write("\n")
+
+        # ----------------------------------------------------
+        # RESPONSE SCHEMAS
+        # ----------------------------------------------------
+
+        f.write("## Response JSON Fields by Endpoint\n\n")
+
+        fields_by_endpoint = defaultdict(list)
+
+        for (endpoint, field), entry in response_fields.items():
+
+            fields_by_endpoint[endpoint].append(
+                (field, entry)
+            )
+
+        for endpoint in sorted(fields_by_endpoint):
+
+            f.write(f"### `{endpoint}`\n\n")
+
+            f.write("| Field | Count | Type(s) | Example |\n")
+            f.write("|---|---:|---|---|\n")
+
+            for field, entry in sorted(
+                fields_by_endpoint[endpoint],
+                key=lambda x: (-x[1]["count"], x[0])
+            ):
+
+                types = ", ".join(
+                    entry["types"].keys()
+                )
+
+                example = (
+                    entry["examples"][0]
+                    if entry["examples"]
+                    else ""
+                )
+
+                f.write(
+                    f"| `{field}` | "
+                    f"{entry['count']:,} | "
+                    f"{types} | "
+                    f"`{example}` |\n"
+                )
+
+            f.write("\n")
+
+        # ----------------------------------------------------
+        # NOTES
+        # ----------------------------------------------------
+
+        f.write("## Analysis Notes\n\n")
+
+        f.write(
+            "- Grammarly traffic was identified using hostname, "
+            "HTTP/2 `:authority`, TLS SNI, and URL information.\n"
         )
 
-        report.append("")
-
-        report.append(
-            "| Field | Occurrences | Type(s) |"
+        f.write(
+            "- JSON detection does **not** depend solely on "
+            "`Content-Type`; this is important because some "
+            "Grammarly telemetry uses `text/plain` while carrying "
+            "JSON bodies.\n"
         )
 
-        report.append(
-            "|---|---:|---|"
+        f.write(
+            "- Sensitive field values are redacted from examples.\n"
         )
 
-        for field_path, types in sorted(
-            response_field_types[
-                endpoint
-            ].items()
-        ):
+        f.write(
+            "- Field paths represent observed wire-level JSON "
+            "structure and should not automatically be interpreted "
+            "as server-side function arguments.\n"
+        )
 
-            count = sum(
-                types.values()
-            )
-
-            type_text = ", ".join(
-                f"{field_type} ({count})"
-                for field_type, count
-                in types.most_common()
-            )
-
-            report.append(
-                f"| `{field_path}` "
-                f"| {count} "
-                f"| {type_text} |"
-            )
-
-        report.append("")
-
-    # --------------------------------------------------------
-    # Interpretation notes
-    # --------------------------------------------------------
-
-    report.append(
-        "## Interpretation Notes"
-    )
-
-    report.append("")
-
-    report.append(
-        "- This is an analysis of **observed network behavior**."
-    )
-
-    report.append(
-        "- Endpoint categories are **heuristics**, not proof of Grammarly's backend architecture."
-    )
-
-    report.append(
-        "- `api_candidate` means the endpoint looks API-like based on its path/content."
-    )
-
-    report.append(
-        "- Telemetry endpoints are separated from likely application APIs."
-    )
-
-    report.append(
-        "- Raw request/response values are intentionally NOT included."
-    )
-
-    report.append(
-        "- Sensitive-looking field values are never written to the report."
-    )
-
-    report.append(
-        "- Field names such as `user_id` may still appear because the field name itself is relevant to schema analysis."
-    )
-
-    report.append(
-        "- WebSocket traffic should be analyzed separately from ordinary REST/HTTP JSON traffic."
-    )
-
-    report.append("")
-
-    report.append(
-        "## Next Research Question"
-    )
-
-    report.append("")
-
-    report.append(
-        "For the controlled experiment, compare the timeline against the manually performed actions:"
-    )
-
-    report.append("")
-
-    report.append(
-        "1. Open Word"
-    )
-
-    report.append(
-        "2. Type text"
-    )
-
-    report.append(
-        "3. Correct Grammarly errors"
-    )
-
-    report.append(
-        "4. Ask Grammarly AI to rewrite"
-    )
-
-    report.append(
-        "5. Insert the rewrite"
-    )
-
-    report.append(
-        "6. Delete the old text"
-    )
-
-    report.append(
-        "7. Close Word"
-    )
-
-    report.append("")
-
-    report.append(
-        "The goal is to identify endpoints and fields that appear/disappear or change around each behavior."
-    )
-
-    (
-        output_directory
-        / "report.md"
-    ).write_text(
-        "\n".join(report),
-        encoding="utf-8",
-    )
-
-    # ========================================================
-    # DONE
-    # ========================================================
-
-    print()
-    print("=" * 60)
-    print("DONE")
-    print("=" * 60)
-
-    print(
-        f"Total flows:       {total_flows:,}"
-    )
-
-    print(
-        f"Grammarly flows:   {grammarly_flows:,}"
-    )
-
-    print(
-        f"JSON requests:     {json_request_count:,}"
-    )
-
-    print(
-        f"JSON responses:    {json_response_count:,}"
-    )
-
-    print(
-        f"Unique endpoints:  {len(endpoint_rows):,}"
-    )
-
-    print()
-    print(
-        f"Results saved to:\n{output_directory.resolve()}"
-    )
-
-    print()
-    print(
-        "START WITH:"
-    )
-
-    print(
-        f"    {output_directory / 'report.md'}"
-    )
+    return report_path
 
 
 # ============================================================
-# COMMAND LINE
+# MAIN
 # ============================================================
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description=(
-            "Analyze a mitmweb/mitmproxy saved flow "
-            "for Grammarly API endpoints and JSON schemas."
-        )
-    )
-
-    parser.add_argument(
-        "flow_file",
-        type=Path,
-        help="Path to the mitmweb saved-flow file",
-    )
-
-    parser.add_argument(
-        "--out",
-        type=Path,
-        default=None,
-        help=(
-            "Output directory. "
-            "Default: <flow_file>_analysis"
-        ),
-    )
-
-    args = parser.parse_args()
-
-    if not args.flow_file.exists():
+    if len(sys.argv) != 2:
 
         print(
-            f"ERROR: File not found:\n{args.flow_file}"
+            "\nUsage:\n"
+            "    python3 grammarly_api_behavior_analyzer.py "
+            "<mitmweb_flow_file>\n"
+        )
+
+        print(
+            "Example:\n"
+            "    python3 grammarly_api_behavior_analyzer.py "
+            "~/mitmWebLogs/mitmWebPrac_2\n"
         )
 
         sys.exit(1)
 
-    if args.out is None:
+    flow_file = os.path.expanduser(sys.argv[1])
 
-        output_directory = Path(
-            str(args.flow_file)
-            + "_analysis"
+    if not os.path.isfile(flow_file):
+
+        print(
+            f"\nERROR: File not found:\n{flow_file}\n"
         )
 
-    else:
+        sys.exit(1)
 
-        output_directory = args.out
+    output_dir = (
+        flow_file
+        + OUTPUT_SUFFIX
+    )
+
+    print()
+    print("=" * 60)
+    print("GRAMMARLY API BEHAVIOR ANALYZER")
+    print("=" * 60)
+    print()
+    print(f"Input:  {flow_file}")
+    print(f"Output: {output_dir}")
+    print()
+    print("Reading mitmweb flow file...")
+    print()
 
     try:
 
-        analyze_flow_file(
-            args.flow_file,
-            output_directory,
-        )
+        with open(flow_file, "rb") as f:
 
-    except KeyboardInterrupt:
+            reader = io.FlowReader(f)
 
-        print(
-            "\n\nStopped by user."
-        )
+            for index, flow in enumerate(
+                reader.stream(),
+                start=1
+            ):
 
-        sys.exit(130)
+                try:
+                    process_flow(flow)
 
-    except Exception as error:
+                except Exception as e:
+
+                    # One malformed flow should not kill a 75 MB capture.
+                    if index <= 20:
+                        print(
+                            f"Warning: could not process flow "
+                            f"{index}: {e}"
+                        )
+
+                if index % 5000 == 0:
+
+                    print(
+                        f"  Processed {index:,} flows..."
+                    )
+
+    except Exception as e:
 
         print()
-        print("=" * 60)
-        print("ERROR")
-        print("=" * 60)
-
-        print(
-            f"{type(error).__name__}: {error}"
-        )
-
+        print("ERROR while reading flow file:")
+        print(str(e))
         print()
-
-        print(
-            "If this is a FlowReader/flow-format error, "
-            "send me the exact error message."
-        )
 
         sys.exit(1)
+
+    print()
+    print("Writing results...")
+    print()
+
+    report_path = write_results(output_dir)
+
+    print("=" * 60)
+    print("DONE")
+    print("=" * 60)
+    print()
+    print(f"Total flows:       {total_flows:,}")
+    print(f"Grammarly flows:   {grammarly_flows:,}")
+    print(f"JSON requests:     {json_requests:,}")
+    print(f"JSON responses:    {json_responses:,}")
+    print(f"Unique endpoints:  {len(endpoint_stats):,}")
+    print()
+    print("Results saved to:")
+    print(output_dir)
+    print()
+    print("START WITH:")
+    print(report_path)
+    print()
+    print("Other useful files:")
+    print(
+        f"  {os.path.join(output_dir, 'endpoints.csv')}"
+    )
+    print(
+        f"  {os.path.join(output_dir, 'request_fields.csv')}"
+    )
+    print(
+        f"  {os.path.join(output_dir, 'response_fields.csv')}"
+    )
+    print(
+        f"  {os.path.join(output_dir, 'behavior_timeline.csv')}"
+    )
+    print()
 
 
 if __name__ == "__main__":
